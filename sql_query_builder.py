@@ -445,21 +445,76 @@ with col_left:
     if not st.session_state.conditions:
         st.markdown("<p style='color:#4a5170;font-style:italic;font-size:0.9rem;'>Aucune condition. Ajoutez des filtres ci-dessus.</p>", unsafe_allow_html=True)
     else:
+        # Group conditions by column, preserving insertion order
+        from collections import OrderedDict
+        groups = OrderedDict()
         for i, cond in enumerate(st.session_state.conditions):
-            with st.container():
-                st.markdown(f"<div class='cond-index'>Condition #{i+1}</div>", unsafe_allow_html=True)
-                cc1, cc2, cc3, cc4 = st.columns([2, 2, 2, 1])
-                with cc1:
-                    st.markdown(f"<span style='font-family:JetBrains Mono,monospace;color:#a5f3fc;font-size:0.85rem;'>{cond['column']}</span>", unsafe_allow_html=True)
-                with cc2:
-                    st.markdown(f"<span style='color:#fbbf24;font-size:0.85rem;'>{cond['operator']}</span>", unsafe_allow_html=True)
-                with cc3:
-                    st.markdown(f"<span style='color:#86efac;font-size:0.85rem;'>«{cond['value']}»</span>", unsafe_allow_html=True)
-                with cc4:
-                    if st.button("✕", key=f"del_{i}", help="Supprimer"):
-                        st.session_state.conditions.pop(i)
+            col_name = cond["column"]
+            if col_name not in groups:
+                groups[col_name] = []
+            groups[col_name].append((i, cond))
+
+        for col_name, entries in groups.items():
+            # Column header
+            st.markdown(
+                f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:6px;'>"
+                f"<span style='font-family:JetBrains Mono,monospace;color:#a5f3fc;font-size:0.85rem;"
+                f"background:#0d2137;border:1px solid #1e4060;padding:3px 12px;border-radius:6px;'>"
+                f"📌 {col_name}</span>"
+                f"<span style='color:#4a5170;font-size:0.75rem;'>{len(entries)} filtre(s)</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+            # Table header
+            header_html = (
+                "<div style='display:grid;grid-template-columns:2fr 2fr 1fr;"
+                "background:#0f111a;border:1px solid #1e2130;border-radius:8px 8px 0 0;"
+                "padding:6px 12px;gap:8px;'>"
+                "<span style='color:#6366f1;font-size:0.73rem;font-weight:700;text-transform:uppercase;"
+                "letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Opérateur</span>"
+                "<span style='color:#6366f1;font-size:0.73rem;font-weight:700;text-transform:uppercase;"
+                "letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Valeur</span>"
+                "<span style='color:#6366f1;font-size:0.73rem;font-weight:700;text-transform:uppercase;"
+                "letter-spacing:1px;font-family:JetBrains Mono,monospace;'></span>"
+                "</div>"
+            )
+            st.markdown(header_html, unsafe_allow_html=True)
+
+            # Rows
+            for row_idx, (global_i, cond) in enumerate(entries):
+                is_last = row_idx == len(entries) - 1
+                radius = "0 0 8px 8px" if is_last else "0"
+                border_bottom = "1px solid #1e2130" if not is_last else "1px solid #1e2130"
+                bg = "#13151d" if row_idx % 2 == 0 else "#10121a"
+
+                row_html = (
+                    f"<div style='display:grid;grid-template-columns:2fr 2fr 1fr;"
+                    f"background:{bg};border-left:1px solid #1e2130;border-right:1px solid #1e2130;"
+                    f"border-bottom:{border_bottom};border-radius:{radius};"
+                    f"padding:7px 12px;gap:8px;align-items:center;'>"
+                    f"<span style='color:#fbbf24;font-size:0.83rem;'>{cond['operator']}</span>"
+                    f"<span style='color:#86efac;font-size:0.83rem;font-family:JetBrains Mono,monospace;'>«{cond['value']}»</span>"
+                    f"<span></span>"
+                    f"</div>"
+                )
+                st.markdown(row_html, unsafe_allow_html=True)
+
+                # Delete button aligned with the row (rendered separately via columns trick)
+                # We overlay it using a hidden expander trick — simpler: use st.columns per row
+                # Actually Streamlit can't overlay HTML buttons, so we render delete below the table
+                # and use a compact button row instead.
+
+            # Delete buttons row per entry
+            btn_cols = st.columns(len(entries) + 1)
+            for btn_idx, (global_i, cond) in enumerate(entries):
+                with btn_cols[btn_idx]:
+                    label = f"✕ #{global_i+1}"
+                    if st.button(label, key=f"del_{global_i}", help=f"Supprimer : {cond['operator']} «{cond['value']}»"):
+                        st.session_state.conditions.pop(global_i)
                         st.rerun()
-                st.markdown("---")
+
+            st.markdown("<div style='margin-bottom:16px;'></div>", unsafe_allow_html=True)
 
     if st.button("▶ Exécuter la requête", use_container_width=True, type="primary"):
         conn = get_connection()
