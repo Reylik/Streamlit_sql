@@ -298,6 +298,20 @@ OPERATORS = {
     "Inférieur à": ("<", lambda v: v),
 }
 
+def build_query_display(table: str, conditions: list, global_op: str) -> str:
+    """Build SQL query with values inlined for display (no placeholders)."""
+    if not conditions:
+        return f"SELECT *\nFROM {table}"
+    sql_op = "AND" if global_op == "ET" else "OR"
+    clauses = []
+    for cond in conditions:
+        sql_sym, value_fn = OPERATORS[cond["operator"]]
+        transformed = value_fn(cond["value"])
+        clauses.append(f"{cond['column']} {sql_sym} '{transformed}'")
+    where = f"\n  {sql_op} ".join(clauses)
+    return f"SELECT *\nFROM {table}\nWHERE {where}"
+
+
 def build_query(table: str, conditions: list, global_op: str) -> tuple[str, list]:
     """Build SQL query string and params list."""
     if not conditions:
@@ -467,52 +481,30 @@ with col_left:
             )
 
             # Table header
-            header_html = (
-                "<div style='display:grid;grid-template-columns:2fr 2fr 1fr;"
-                "background:#0f111a;border:1px solid #1e2130;border-radius:8px 8px 0 0;"
-                "padding:6px 12px;gap:8px;'>"
-                "<span style='color:#6366f1;font-size:0.73rem;font-weight:700;text-transform:uppercase;"
-                "letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Opérateur</span>"
-                "<span style='color:#6366f1;font-size:0.73rem;font-weight:700;text-transform:uppercase;"
-                "letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Valeur</span>"
-                "<span style='color:#6366f1;font-size:0.73rem;font-weight:700;text-transform:uppercase;"
-                "letter-spacing:1px;font-family:JetBrains Mono,monospace;'></span>"
-                "</div>"
-            )
-            st.markdown(header_html, unsafe_allow_html=True)
+            h1, h2, h3 = st.columns([2, 2, 1])
+            with h1:
+                st.markdown("<span style='color:#6366f1;font-size:0.73rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Opérateur</span>", unsafe_allow_html=True)
+            with h2:
+                st.markdown("<span style='color:#6366f1;font-size:0.73rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Valeur</span>", unsafe_allow_html=True)
+            with h3:
+                st.markdown("<span style='color:#6366f1;font-size:0.73rem;font-weight:700;text-transform:uppercase;letter-spacing:1px;font-family:JetBrains Mono,monospace;'></span>", unsafe_allow_html=True)
 
-            # Rows
+            st.markdown("<div style='border-top:1px solid #1e2130;margin:4px 0 2px 0;'></div>", unsafe_allow_html=True)
+
+            # One row per condition
             for row_idx, (global_i, cond) in enumerate(entries):
-                is_last = row_idx == len(entries) - 1
-                radius = "0 0 8px 8px" if is_last else "0"
-                border_bottom = "1px solid #1e2130" if not is_last else "1px solid #1e2130"
-                bg = "#13151d" if row_idx % 2 == 0 else "#10121a"
-
-                row_html = (
-                    f"<div style='display:grid;grid-template-columns:2fr 2fr 1fr;"
-                    f"background:{bg};border-left:1px solid #1e2130;border-right:1px solid #1e2130;"
-                    f"border-bottom:{border_bottom};border-radius:{radius};"
-                    f"padding:7px 12px;gap:8px;align-items:center;'>"
-                    f"<span style='color:#fbbf24;font-size:0.83rem;'>{cond['operator']}</span>"
-                    f"<span style='color:#86efac;font-size:0.83rem;font-family:JetBrains Mono,monospace;'>«{cond['value']}»</span>"
-                    f"<span></span>"
-                    f"</div>"
-                )
-                st.markdown(row_html, unsafe_allow_html=True)
-
-                # Delete button aligned with the row (rendered separately via columns trick)
-                # We overlay it using a hidden expander trick — simpler: use st.columns per row
-                # Actually Streamlit can't overlay HTML buttons, so we render delete below the table
-                # and use a compact button row instead.
-
-            # Delete buttons row per entry
-            btn_cols = st.columns(len(entries) + 1)
-            for btn_idx, (global_i, cond) in enumerate(entries):
-                with btn_cols[btn_idx]:
-                    label = f"✕ #{global_i+1}"
-                    if st.button(label, key=f"del_{global_i}", help=f"Supprimer : {cond['operator']} «{cond['value']}»"):
+                rc1, rc2, rc3 = st.columns([2, 2, 1])
+                with rc1:
+                    st.markdown(f"<span style='color:#fbbf24;font-size:0.83rem;'>{cond['operator']}</span>", unsafe_allow_html=True)
+                with rc2:
+                    st.markdown(f"<span style='color:#86efac;font-size:0.83rem;font-family:JetBrains Mono,monospace;'>«{cond['value']}»</span>", unsafe_allow_html=True)
+                with rc3:
+                    if st.button("✕", key=f"del_{global_i}", help=f"Supprimer cette condition"):
                         st.session_state.conditions.pop(global_i)
                         st.rerun()
+
+                if row_idx < len(entries) - 1:
+                    st.markdown("<div style='border-top:1px solid #1a1d27;margin:0;'></div>", unsafe_allow_html=True)
 
             st.markdown("<div style='margin-bottom:16px;'></div>", unsafe_allow_html=True)
 
@@ -537,7 +529,7 @@ with col_right:
     st.markdown(tree_html, unsafe_allow_html=True)
 
     st.markdown("### 🧾 Requête SQL générée")
-    query_preview, _ = build_query(
+    query_preview = build_query_display(
         st.session_state.selected_table,
         st.session_state.conditions,
         st.session_state.global_op,
