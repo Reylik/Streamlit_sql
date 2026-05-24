@@ -341,49 +341,60 @@ def build_tree_html(conditions: list, global_op: str) -> str:
         return "<p style='color:#4a5170;font-style:italic;'>Aucune condition ajoutée.</p>"
 
     op_color = "#60a5fa" if global_op == "ET" else "#f472b6"
-    op_bg = "#172554" if global_op == "ET" else "#4a044e"
+    op_bg    = "#172554" if global_op == "ET" else "#4a044e"
 
-    html = f"""
-    <div class='tree-container'>
-      <div style='margin-bottom:12px;'>
-        <span style='color:#94a3b8;font-size:0.8rem;font-family:JetBrains Mono,monospace;'>REQUÊTE</span>
-        <div style='margin-top:4px;'>
-          <span class='tree-node-root'>SELECT * FROM {st.session_state.selected_table}</span>
-        </div>
-      </div>
-      <div class='tree-line'>
-        <div style='margin-bottom:8px;'>
-          <span style='color:#94a3b8;font-size:0.78rem;font-family:JetBrains Mono,monospace;'>WHERE</span>
-        </div>
-    """
-
+    rows = ""
     for i, cond in enumerate(conditions):
-        col = cond["column"]
-        op_label = cond["operator"]
-        val = cond["value"]
+        col       = cond["column"]
+        op_label  = cond["operator"]
+        val       = cond["value"]
         sql_sym, value_fn = OPERATORS[op_label]
         display_val = value_fn(val)
 
-        node = f'<span style="color:#a5f3fc">{col}</span> <span style="color:#fbbf24">{sql_sym}</span> <span style="color:#86efac">"{display_val}"</span>'
-
+        # operator badge between nodes
         if i > 0:
-            html += f"""
-            <div style='margin: 4px 0;'>
-              <span style='background:{op_bg};color:{op_color};padding:2px 10px;border-radius:4px;
-                           font-family:JetBrains Mono,monospace;font-size:0.75rem;font-weight:700;'>
-                {global_op}
-              </span>
-            </div>"""
+            rows += (
+                f"<div style='margin:4px 0 4px 12px;'>"
+                f"<span style='background:{op_bg};color:{op_color};padding:2px 10px;"
+                f"border-radius:4px;font-family:JetBrains Mono,monospace;"
+                f"font-size:0.75rem;font-weight:700;'>{global_op}</span>"
+                f"</div>"
+            )
 
-        html += f"""
-        <div style='margin: 4px 0;'>
-          <div class='tree-line' style='margin-left:12px;padding-left:14px;border-left-color:#334155;'>
-            <span class='tree-node-cond'>{node}</span>
-          </div>
-        </div>
-        """
+        # condition node — flat structure, no nested spans inside spans
+        rows += (
+            f"<div style='margin:4px 0;padding-left:24px;"
+            f"border-left:2px solid #334155;'>"
+            f"<code style='background:#1e293b;border:1px solid #334155;border-radius:6px;"
+            f"padding:5px 12px;font-size:0.82rem;display:inline-block;"
+            f"font-family:JetBrains Mono,monospace;color:#e2e8f0;'>"
+            f"<b style='color:#a5f3fc;'>{col}</b>"
+            f"&nbsp;<span style='color:#fbbf24;'>{sql_sym}</span>&nbsp;"
+            f"<span style='color:#86efac;'>'{display_val}'</span>"
+            f"</code>"
+            f"</div>"
+        )
 
-    html += "</div></div>"
+    html = (
+        f"<div class='tree-container'>"
+        f"<div style='margin-bottom:10px;'>"
+        f"<span style='color:#94a3b8;font-size:0.75rem;"
+        f"font-family:JetBrains Mono,monospace;text-transform:uppercase;"
+        f"letter-spacing:1px;'>Requête</span>"
+        f"<div style='margin-top:6px;'>"
+        f"<span class='tree-node-root'>SELECT * FROM {st.session_state.selected_table}</span>"
+        f"</div>"
+        f"</div>"
+        f"<div style='padding-left:16px;border-left:2px solid #1e2130;margin-top:4px;'>"
+        f"<div style='margin-bottom:8px;'>"
+        f"<span style='color:#94a3b8;font-size:0.75rem;"
+        f"font-family:JetBrains Mono,monospace;text-transform:uppercase;"
+        f"letter-spacing:1px;'>WHERE</span>"
+        f"</div>"
+        f"{rows}"
+        f"</div>"
+        f"</div>"
+    )
     return html
 
 # ─── Sidebar ───────────────────────────────────────────────────────────────────
