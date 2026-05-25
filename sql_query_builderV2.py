@@ -227,110 +227,107 @@ BRANCH_STYLES = {
 }
 NEUTRAL_CONNECTOR = "#475569"
 
-# Langage naturel pour l'arbre (colonne, op, valeur)
-OP_NATURAL = {
-    "Contient":     ("contient",     True),   # True = valeur entre guillemets
-    "Commence par": ("commence par", True),
-    "Finit par":    ("finit par",    True),
-    "Égal à":       ("est",          True),
-    "Différent de": ("n'est pas",    True),
-    "Supérieur à":  (">",            False),
-    "Inférieur à":  ("<",            False),
-}
-
 def _leaf_html(conditions, idx):
-    c        = conditions[idx]
-    op_str, quoted = OP_NATURAL[c["operator"]]
-    val_str  = f"«\u202f{c['value']}\u202f»" if quoted else c["value"]
+    c = conditions[idx]
+    sym, fn = OPERATORS[c["operator"]]
+    dv = fn(c["value"])
     return (
         f"<span class='t-leaf'>"
         f"<b style='color:#a5f3fc;'>{c['column']}</b> "
-        f"<span style='color:#fbbf24;'>{op_str}</span> "
-        f"<span style='color:#86efac;'>{val_str}</span>"
+        f"<span style='color:#fbbf24;'>{sym}</span> "
+        f"<span style='color:#86efac;'>'{dv}'</span>"
         f"</span>"
     )
 
 def _build_prefix_html(prefix_parts, connector, connector_color):
-    """Build colored monospace prefix + connector.
-    Wraps everything in display:inline-flex so spans NEVER break between each other,
-    even on narrow mobile columns.
-    """
+    """Build colored monospace prefix + connector as an HTML string."""
     spans = "".join(
-        f"<span style='color:{c};white-space:pre;'>{t}</span>"
+        f"<span style='font-family:JetBrains Mono,monospace;font-size:.82rem;"
+        f"white-space:pre;color:{c};'>{t}</span>"
         for t, c in prefix_parts
     )
     if connector:
         spans += (
-            f"<span style='color:{connector_color};white-space:pre;'>{connector}</span>"
+            f"<span style='font-family:JetBrains Mono,monospace;font-size:.82rem;"
+            f"white-space:pre;color:{connector_color};'>{connector}</span>"
         )
-    if not spans:
-        return ""
-    return (
-        f"<span style='display:inline-flex;align-items:center;"
-        f"white-space:nowrap;font-family:JetBrains Mono,monospace;"
-        f"font-size:.82rem;'>{spans}</span>"
-    )
+    return spans
 
-def _render_node(node, conditions, depth=0, is_last=True, is_root=False, parent_op=None):
+def _render_node(node, conditions, prefix_parts=None, is_last=True,
+                 is_root=False, parent_op=None):
     """
-    Indent-based tree renderer — no separate prefix column.
-    • Connector chars (├──, └──) are embedded directly in the content.
-    • CSS padding-left handles indentation → works on any screen width.
-    • No narrow column = no wrapping of │ / ├── on mobile.
+    Recursively render the tree mixing st.markdown (leaves) and st.button (branches).
+
+    prefix_parts : list of (text, color) — accumulated monospace prefix chars,
+                   each colored by the branch that created that indentation level.
+    parent_op    : "ET"|"OU"|None — the operator of the direct parent branch,
+                   used to color the connector drawn before THIS node.
+    
+    Color rules
+    ───────────
+    • Connector (├── / └──) before a node  → parent branch color
+    • Bar (│   ) added for THIS branch's open level → THIS branch's color
+      (represents "this branch still has a right child coming")
     """
-    indent_px  = depth * 22
-    conn_color = BRANCH_STYLES[parent_op]["color"] if parent_op else NEUTRAL_CONNECTOR
-    connector  = "" if is_root else ("└── " if is_last else "├── ")
+    if prefix_parts is None:
+        prefix_parts = []
+
+    connector       = "" if is_root else ("└── " if is_last else "├── ")
+    connector_color = BRANCH_STYLES[parent_op]["color"] if parent_op else NEUTRAL_CONNECTOR
+    prefix_len      = sum(len(t) for t, _ in prefix_parts) + len(connector)
+
+    # Build the full colored prefix HTML for this row
+    prefix_html = _build_prefix_html(prefix_parts, connector, connector_color)
 
     # ── LEAF ───────────────────────────────────────────────────────────────────
     if node["type"] == "leaf":
-        idx = node["idx"]
-        conn_span = (
-            f"<span style='color:{conn_color};font-family:JetBrains Mono,monospace;"
-            f"white-space:pre;font-size:.82rem;'>{connector}</span>"
-        ) if connector else ""
-        st.markdown(
-            f"<div style='margin-left:{indent_px}px;padding:4px 0;"
-            f"display:flex;align-items:center;gap:2px;'>"
-            f"{conn_span}{_leaf_html(conditions, idx)}"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+        if prefix_html:
+            w = max(prefix_len * 0.135, 0.35)
+            ca, cb = st.columns([w, max(9 - w, 1)])
+            ca.markdown(
+                f"<div style='padding-top:8px;line-height:1;'>{prefix_html}</div>",
+                unsafe_allow_html=True,
+            )
+            cb.markdown(
+                f"<div style='padding-top:6px;'>{_leaf_html(conditions, node['idx'])}</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(_leaf_html(conditions, node["idx"]), unsafe_allow_html=True)
 
     # ── BRANCH ─────────────────────────────────────────────────────────────────
     else:
         op        = node["op"]
         right_idx = node["right"]["idx"]
-        s         = BRANCH_STYLES[op]
-        uid       = f"bm{right_idx}"
-        # Connector chars embedded in button label → always on same line
-        btn_label = f"{connector}{op}" if connector else op
+        node_color = BRANCH_STYLES[op]["color"]   # THIS branch's color
 
-        st.markdown(
-            f'<div id="{uid}"></div>'
-            f"<style>"
-            f"div.element-container:has(#{uid})+div.element-container{{"
-            f"padding-left:{indent_px}px!important;}}"
-            f"div.element-container:has(#{uid})+div.element-container button{{"
-            f"background:{s['bg']}!important;color:{s['color']}!important;"
-            f"border:1.5px solid {s['border']}!important;"
-            f"font-family:'JetBrains Mono',monospace!important;"
-            f"font-size:.82rem!important;font-weight:700!important;"
-            f"width:auto!important;border-radius:5px!important;"
-            f"box-shadow:0 0 8px {s['border']}55!important;"
-            f"padding:4px 14px!important;}}"
-            f"div.element-container:has(#{uid})+div.element-container button:hover{{"
-            f"filter:brightness(1.3)!important;transform:translateY(-1px)!important;}}"
-            f"</style>",
-            unsafe_allow_html=True,
-        )
-        if st.button(btn_label, key=f"treeop_{right_idx}",
-                     help="Cliquer pour basculer ET / OU"):
-            st.session_state.conditions[right_idx]["join_op"] = "OU" if op == "ET" else "ET"
-            st.rerun()
+        # Render button row
+        if prefix_html:
+            w = max(prefix_len * 0.135, 0.35)
+            ca, cb = st.columns([w, max(9 - w, 1)])
+            ca.markdown(
+                f"<div style='padding-top:8px;line-height:1;'>{prefix_html}</div>",
+                unsafe_allow_html=True,
+            )
+            with cb:
+                _branch_button(op, right_idx)
+        else:
+            _branch_button(op, right_idx)
 
-        _render_node(node["left"],  conditions, depth+1, is_last=False, parent_op=op)
-        _render_node(node["right"], conditions, depth+1, is_last=True,  parent_op=op)
+        # Build child prefix_parts:
+        #   • Root adds nothing (no parent to keep "open")
+        #   • Non-last child: add │   colored with THIS branch's color
+        #     (the bar means "this branch still has its right child coming")
+        #   • Last child: add spaces (invisible, color doesn't matter)
+        if is_root:
+            new_prefix = prefix_parts
+        elif not is_last:
+            new_prefix = prefix_parts + [(f"│   ", node_color)]
+        else:
+            new_prefix = prefix_parts + [("    ", node_color)]
+
+        _render_node(node["left"],  conditions, new_prefix, is_last=False, parent_op=op)
+        _render_node(node["right"], conditions, new_prefix, is_last=True,  parent_op=op)
 
 
 def _branch_button(op, right_idx):
@@ -382,7 +379,7 @@ def render_tree(conditions, table):
             unsafe_allow_html=True,
         )
         return
-    _render_node(tree, conditions, depth=0, is_last=True, is_root=True, parent_op=None)
+    _render_node(tree, conditions, prefix_parts=[], is_last=True, is_root=True, parent_op=None)
 
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
@@ -619,13 +616,12 @@ def cell_filter_dialog(col_name, cell_value):
         st.rerun()
 
     # ── Bouton 2 : Compter ─────────────────────────────────────────────────────
-    if st.button("🔢 Estimer le nombre de résultats (COUNT)",
-                 use_container_width=True, key="dlg_count"):
+    if st.button("🔢 Estimer le nombre de résultats (COUNT)", use_container_width=True, key="dlg_count"):
         conn = get_connection()
         q    = f"SELECT COUNT(*) AS total FROM {target_table} WHERE {col_name} {sql_sym} ?"
         try:
-            res   = pd.read_sql_query(q, conn, params=[transformed_val])
-            count = int(res["total"].iloc[0])
+            result = pd.read_sql_query(q, conn, params=[transformed_val])
+            count  = int(result["total"].iloc[0])
             st.markdown(
                 f"<div style='background:#0f2a1a;border:1px solid #166534;border-radius:8px;"
                 f"padding:12px 18px;text-align:center;margin-top:8px;'>"
