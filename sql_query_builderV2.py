@@ -294,18 +294,29 @@ def _render_node(node, conditions, prefix="", is_last=True, is_root=False):
 
 
 def _branch_button(label, right_idx, is_et):
-    """Render a styled ET/OU toggle button. ET=red, OU=blue."""
+    """Render a styled ET/OU toggle button. ET=rouge, OU=bleu.
+    
+    CSS trick: inject a marker <div id="..."> + style in ONE st.markdown call,
+    then use element-container:has(#marker) + element-container button to target
+    the very next button rendered by Streamlit.
+    """
     bg     = "#450a0a" if is_et else "#172554"
-    color  = "#fca5a5" if is_et else "#60a5fa"
-    border = "#7f1d1d" if is_et else "#1e3a8a"
+    color  = "#fca5a5" if is_et else "#93c5fd"
+    border = "#991b1b" if is_et else "#1d4ed8"
+    marker = f"tbtn-{right_idx}"
     st.markdown(
+        f'<div id="{marker}"></div>'
         f"<style>"
-        f"div[data-testid='stButton']:has(button[kind][id$='treeop_{right_idx}']) button{{"
+        f"div.element-container:has(#{marker}) + div.element-container button{{"
         f"background:{bg}!important;color:{color}!important;"
-        f"border:1px solid {border}!important;"
+        f"border:1.5px solid {border}!important;"
         f"font-family:'JetBrains Mono',monospace!important;"
-        f"font-size:.8rem!important;font-weight:700!important;"
-        f"padding:2px 14px!important;border-radius:5px!important;}}"
+        f"font-size:.82rem!important;font-weight:700!important;"
+        f"padding:3px 16px!important;border-radius:5px!important;"
+        f"box-shadow:0 0 8px {border}55!important;"
+        f"min-height:0!important;}}"
+        f"div.element-container:has(#{marker}) + div.element-container button:hover{{"
+        f"filter:brightness(1.25)!important;transform:translateY(-1px)!important;}}"
         f"</style>",
         unsafe_allow_html=True,
     )
@@ -503,11 +514,40 @@ with col_right:
     preview = build_query_display(st.session_state.selected_table, st.session_state.conditions)
     st.markdown(f"<div class='sql-display'>{preview}</div>", unsafe_allow_html=True)
 
+@st.dialog("🔎 Filtrer sur cette valeur")
+def cell_filter_dialog(col_name, cell_value, table_cols):
+    st.markdown(
+        f"<div style='background:#13151d;border:1px solid #1e2130;border-radius:10px;"
+        f"padding:14px 18px;margin-bottom:16px;'>"
+        f"<span style='color:#94a3b8;font-size:.75rem;text-transform:uppercase;"
+        f"letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Cellule sélectionnée</span><br>"
+        f"<span style='font-family:JetBrains Mono,monospace;'>"
+        f"<b style='color:#a5f3fc;'>{col_name}</b>"
+        f" <span style='color:#fbbf24;'>=</span>"
+        f" <span style='color:#86efac;'>«{cell_value}»</span>"
+        f"</span></div>",
+        unsafe_allow_html=True,
+    )
+    op  = st.selectbox("Opérateur de recherche", OP_LABELS, key="dlg_op")
+    if st.session_state.conditions:
+        join = st.radio("Lier à l'arbre avec", ["ET", "OU"], horizontal=True, key="dlg_join")
+    else:
+        join = "ET"
+    if st.button("➕ Ajouter comme condition", use_container_width=True, type="primary"):
+        st.session_state.conditions.append({
+            "column":   col_name,
+            "operator": op,
+            "value":    str(cell_value),
+            "join_op":  join,
+        })
+        st.rerun()
+
 # ══ RESULTS ═══════════════════════════════════════════════════════════════════
 if st.session_state.results is not None:
     df = st.session_state.results
     st.markdown("---")
     st.markdown("### 📊 Résultats")
+    st.caption("💡 Cliquez sur une cellule pour créer un filtre à partir de sa valeur.")
     m1, m2, m3 = st.columns(3)
     m1.metric("Lignes", len(df))
     m2.metric("Colonnes", len(df.columns))
@@ -515,7 +555,23 @@ if st.session_state.results is not None:
     if len(df) == 0:
         st.info("Aucun résultat ne correspond à vos critères.")
     else:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        event = st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-cell",
+        )
+        sel = event.selection if hasattr(event, "selection") else {}
+        rows = sel.get("rows", [])
+        cols = sel.get("columns", [])
+        if rows and cols:
+            row_i = rows[0]
+            col_i = cols[0]
+            col_name   = df.columns[col_i]
+            cell_value = df.iloc[row_i, col_i]
+            cell_filter_dialog(col_name, cell_value, list(df.columns))
+
         st.download_button("⬇ Télécharger CSV",
             df.to_csv(index=False).encode("utf-8"),
             f"resultats_{st.session_state.selected_table}.csv", "text/csv")
