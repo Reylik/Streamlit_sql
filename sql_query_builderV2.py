@@ -227,15 +227,26 @@ BRANCH_STYLES = {
 }
 NEUTRAL_CONNECTOR = "#475569"
 
+# Langage naturel pour l'arbre (colonne, op, valeur)
+OP_NATURAL = {
+    "Contient":     ("contient",     True),   # True = valeur entre guillemets
+    "Commence par": ("commence par", True),
+    "Finit par":    ("finit par",    True),
+    "Égal à":       ("est",          True),
+    "Différent de": ("n'est pas",    True),
+    "Supérieur à":  (">",            False),
+    "Inférieur à":  ("<",            False),
+}
+
 def _leaf_html(conditions, idx):
-    c = conditions[idx]
-    sym, fn = OPERATORS[c["operator"]]
-    dv = fn(c["value"])
+    c        = conditions[idx]
+    op_str, quoted = OP_NATURAL[c["operator"]]
+    val_str  = f"«\u202f{c['value']}\u202f»" if quoted else c["value"]
     return (
         f"<span class='t-leaf'>"
         f"<b style='color:#a5f3fc;'>{c['column']}</b> "
-        f"<span style='color:#fbbf24;'>{sym}</span> "
-        f"<span style='color:#86efac;'>'{dv}'</span>"
+        f"<span style='color:#fbbf24;'>{op_str}</span> "
+        f"<span style='color:#86efac;'>{val_str}</span>"
         f"</span>"
     )
 
@@ -616,26 +627,33 @@ def cell_filter_dialog(col_name, cell_value):
             return
         st.rerun()
 
-    # ── Bouton 2 : Compter ─────────────────────────────────────────────────────
-    if st.button("🔢 Estimer le nombre de résultats (COUNT)", use_container_width=True, key="dlg_count"):
-        conn = get_connection()
-        q    = f"SELECT COUNT(*) AS total FROM {target_table} WHERE {col_name} {sql_sym} ?"
-        try:
-            result = pd.read_sql_query(q, conn, params=[transformed_val])
-            count  = int(result["total"].iloc[0])
-            st.markdown(
-                f"<div style='background:#0f2a1a;border:1px solid #166534;border-radius:8px;"
-                f"padding:12px 18px;text-align:center;margin-top:8px;'>"
-                f"<span style='color:#86efac;font-size:.75rem;text-transform:uppercase;"
-                f"letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Résultats estimés</span><br>"
-                f"<span style='color:#4ade80;font-size:2rem;font-weight:800;"
-                f"font-family:JetBrains Mono,monospace;'>{count}</span>"
-                f"<span style='color:#86efac;font-size:.85rem;'> ligne(s)</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-        except Exception as e:
-            st.error(f"Erreur SQL : {e}")
+    # ── Bouton 2 : Compter — résultat s'affiche dans le bouton lui-même ─────────
+    count_key = f"cnt_{target_table}__{col_name}__{op}__{str_value}"
+    if count_key in st.session_state:
+        count = st.session_state[count_key]
+        st.markdown(
+            f"<div style='background:#14532d;border:2px solid #16a34a;border-radius:8px;"
+            f"padding:12px;text-align:center;cursor:default;margin-bottom:4px;'>"
+            f"<span style='color:#86efac;font-size:.72rem;text-transform:uppercase;"
+            f"letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Résultats estimés</span><br>"
+            f"<span style='color:#4ade80;font-size:2.2rem;font-weight:800;"
+            f"font-family:JetBrains Mono,monospace;line-height:1.3;'>{count}</span>"
+            f"<span style='color:#86efac;font-size:.85rem;'> ligne(s)</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        if st.button("🔢 Estimer le nombre de résultats (COUNT)",
+                     use_container_width=True, key="dlg_count"):
+            conn = get_connection()
+            q    = f"SELECT COUNT(*) AS total FROM {target_table} WHERE {col_name} {sql_sym} ?"
+            try:
+                res   = pd.read_sql_query(q, conn, params=[transformed_val])
+                count = int(res["total"].iloc[0])
+                st.session_state[count_key] = count
+            except Exception as e:
+                st.error(f"Erreur SQL : {e}")
+            st.rerun()
 
     # ── Séparateur + ajout à l'arbre ───────────────────────────────────────────
     st.divider()
@@ -682,67 +700,6 @@ if st.session_state.results is not None:
         cols = sel.get("columns", [])
         if rows and cols:
             cell_filter_dialog(df.columns[cols[0]], df.iloc[rows[0], cols[0]])
-
-        # ── Fallback mobile : sélection manuelle ──────────────────────────────
-        with st.expander("📱 Sélection manuelle (mobile / fallback)", expanded=False):
-            st.caption("Si le clic sur cellule ne fonctionne pas, utilisez ce panneau.")
-            fb_col = st.selectbox("Colonne", df.columns.tolist(), key="fb_col")
-            fb_val = st.selectbox(
-                "Valeur",
-                sorted(df[fb_col].dropna().astype(str).unique().tolist()),
-                key="fb_val",
-            )
-            fb_op  = st.selectbox("Opérateur", OP_LABELS, key="fb_op")
-            sql_sym_fb, value_fn_fb = OPERATORS[fb_op]
-            transformed_fb = value_fn_fb(fb_val)
-            st.markdown(
-                f"<div style='background:#0a0c12;border-left:3px solid #6366f1;"
-                f"border-radius:6px;padding:7px 12px;font-family:JetBrains Mono,monospace;"
-                f"font-size:.78rem;color:#a5f3fc;margin:6px 0;'>"
-                f"WHERE <b>{fb_col}</b> <span style='color:#fbbf24'>{sql_sym_fb}</span>"
-                f" <span style='color:#86efac'>'{transformed_fb}'</span></div>",
-                unsafe_allow_html=True,
-            )
-            # Which tables have this column?
-            tables_fb = [t for t, cols_t in TABLES.items() if fb_col in cols_t]
-            fb_table  = st.selectbox("Table cible", tables_fb, key="fb_table",
-                                     index=tables_fb.index(st.session_state.selected_table)
-                                     if st.session_state.selected_table in tables_fb else 0)
-            fa, fb_, fc = st.columns(3)
-            with fa:
-                if st.button("▶ Lancer", use_container_width=True, type="primary", key="fb_run"):
-                    conn = get_connection()
-                    q = f"SELECT * FROM {fb_table} WHERE {fb_col} {sql_sym_fb} ?"
-                    try:
-                        st.session_state.results        = pd.read_sql_query(q, conn, params=[transformed_fb])
-                        st.session_state.selected_table = fb_table
-                        st.session_state.conditions = [{
-                            "column": fb_col, "operator": fb_op,
-                            "value": fb_val, "join_op": "ET",
-                        }]
-                    except Exception as e:
-                        st.error(str(e))
-                    st.rerun()
-            with fb_:
-                if st.button("🔢 Compter", use_container_width=True, key="fb_count"):
-                    conn = get_connection()
-                    q = f"SELECT COUNT(*) AS total FROM {fb_table} WHERE {fb_col} {sql_sym_fb} ?"
-                    try:
-                        cnt = pd.read_sql_query(q, conn, params=[transformed_fb])["total"].iloc[0]
-                        st.success(f"{int(cnt)} ligne(s)")
-                    except Exception as e:
-                        st.error(str(e))
-            with fc:
-                if st.session_state.conditions:
-                    fb_join = st.radio("Lier", ["ET","OU"], horizontal=True, key="fb_join")
-                else:
-                    fb_join = "ET"
-                if st.button("➕ Ajouter", use_container_width=True, key="fb_add"):
-                    st.session_state.conditions.append({
-                        "column": fb_col, "operator": fb_op,
-                        "value": fb_val, "join_op": fb_join,
-                    })
-                    st.rerun()
 
         st.download_button("⬇ Télécharger CSV",
             df.to_csv(index=False).encode("utf-8"),
