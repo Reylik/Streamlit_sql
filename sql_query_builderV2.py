@@ -164,7 +164,7 @@ OPERATORS = {
 OP_LABELS = list(OPERATORS.keys())
 
 # ── State ──────────────────────────────────────────────────────────────────────
-for k, v in [("conditions",[]),("selected_table","employes"),("results",None),("editing",{})]:
+for k, v in [("conditions",[]),("selected_table","employes"),("results",None),("editing",{}),("tree_editing",None)]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -292,19 +292,108 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True,
 
     # ── LEAF ───────────────────────────────────────────────────────────────────
     if node["type"] == "leaf":
-        if prefix_html:
-            w = max(prefix_len * 0.135, 0.35)
-            ca, cb = st.columns([w, max(9 - w, 1)])
-            ca.markdown(
-                f"<div style='padding-top:8px;line-height:1;'>{prefix_html}</div>",
-                unsafe_allow_html=True,
-            )
-            cb.markdown(
-                f"<div style='padding-top:6px;'>{_leaf_html(conditions, node['idx'])}</div>",
-                unsafe_allow_html=True,
-            )
+        idx = node["idx"]
+        editing = (st.session_state.get("tree_editing") == idx)
+
+        if editing:
+            # ── Edition inline ──────────────────────────────────────────────
+            if prefix_html:
+                w = max(prefix_len * 0.135, 0.35)
+                ca, cb = st.columns([w, max(9 - w, 1)])
+                ca.markdown(
+                    f"<div style='padding-top:8px;line-height:1;'>{prefix_html}</div>",
+                    unsafe_allow_html=True,
+                )
+                edit_col = cb
+            else:
+                edit_col = st.container()
+
+            with edit_col:
+                cond = conditions[idx]
+                e1, e2, e3, e4 = st.columns([3, 3, 0.8, 0.8])
+                with e1:
+                    new_op = st.selectbox(
+                        "op", OP_LABELS,
+                        index=OP_LABELS.index(cond["operator"]),
+                        key=f"tree_eop_{idx}",
+                        label_visibility="collapsed",
+                    )
+                with e2:
+                    new_val = st.text_input(
+                        "val", value=cond["value"],
+                        key=f"tree_eval_{idx}",
+                        label_visibility="collapsed",
+                    )
+                with e3:
+                    # Inject green style for ✓ button
+                    ok_marker = f"treeok-{idx}"
+                    st.markdown(
+                        f'<div id="{ok_marker}"></div>'
+                        f"<style>div.element-container:has(#{ok_marker})"
+                        f" + div.element-container button{{"
+                        f"background:#14532d!important;color:#4ade80!important;"
+                        f"border:1px solid #16a34a!important;font-size:.85rem!important;"
+                        f"padding:4px 8px!important;min-height:0!important;}}</style>",
+                        unsafe_allow_html=True,
+                    )
+                    if st.button("✓", key=f"tree_ok_{idx}"):
+                        st.session_state.conditions[idx]["operator"] = new_op
+                        st.session_state.conditions[idx]["value"]    = new_val.strip() or cond["value"]
+                        st.session_state.tree_editing = None
+                        st.rerun()
+                with e4:
+                    # Inject grey style for ✕ button
+                    cx_marker = f"treecx-{idx}"
+                    st.markdown(
+                        f'<div id="{cx_marker}"></div>'
+                        f"<style>div.element-container:has(#{cx_marker})"
+                        f" + div.element-container button{{"
+                        f"background:#1e1e2e!important;color:#94a3b8!important;"
+                        f"border:1px solid #334155!important;font-size:.85rem!important;"
+                        f"padding:4px 8px!important;min-height:0!important;}}</style>",
+                        unsafe_allow_html=True,
+                    )
+                    if st.button("✕", key=f"tree_cx_{idx}"):
+                        st.session_state.tree_editing = None
+                        st.rerun()
+
         else:
-            st.markdown(_leaf_html(conditions, node["idx"]), unsafe_allow_html=True)
+            # ── Affichage normal + bouton ✏️ ────────────────────────────────
+            if prefix_html:
+                w = max(prefix_len * 0.135, 0.35)
+                ca, cb, cc = st.columns([w, max(9 - w, 1), 0.6])
+                ca.markdown(
+                    f"<div style='padding-top:8px;line-height:1;'>{prefix_html}</div>",
+                    unsafe_allow_html=True,
+                )
+                cb.markdown(
+                    f"<div style='padding-top:6px;'>{_leaf_html(conditions, idx)}</div>",
+                    unsafe_allow_html=True,
+                )
+                edit_btn_col = cc
+            else:
+                cb2, cc2 = st.columns([9, 0.6])
+                cb2.markdown(_leaf_html(conditions, idx), unsafe_allow_html=True)
+                edit_btn_col = cc2
+
+            with edit_btn_col:
+                pen_marker = f"treepen-{idx}"
+                st.markdown(
+                    f'<div id="{pen_marker}"></div>'
+                    f"<style>div.element-container:has(#{pen_marker})"
+                    f" + div.element-container button{{"
+                    f"background:#1e1e2e!important;color:#94a3b8!important;"
+                    f"border:1px solid #334155!important;font-size:.75rem!important;"
+                    f"padding:3px 7px!important;min-height:0!important;"
+                    f"border-radius:5px!important;}}"
+                    f"div.element-container:has(#{pen_marker})"
+                    f" + div.element-container button:hover{{"
+                    f"color:#e2e8f0!important;border-color:#6366f1!important;}}</style>",
+                    unsafe_allow_html=True,
+                )
+                if st.button("✏️", key=f"tree_pen_{idx}", help="Modifier cet critère"):
+                    st.session_state.tree_editing = idx
+                    st.rerun()
 
     # ── BRANCH ─────────────────────────────────────────────────────────────────
     else:
