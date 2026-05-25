@@ -251,18 +251,25 @@ def _leaf_html(conditions, idx):
     )
 
 def _build_prefix_html(prefix_parts, connector, connector_color):
-    """Build colored monospace prefix + connector as an HTML string."""
+    """Build colored monospace prefix + connector.
+    Wraps everything in display:inline-flex so spans NEVER break between each other,
+    even on narrow mobile columns.
+    """
     spans = "".join(
-        f"<span style='font-family:JetBrains Mono,monospace;font-size:.82rem;"
-        f"white-space:pre;color:{c};'>{t}</span>"
+        f"<span style='color:{c};white-space:pre;'>{t}</span>"
         for t, c in prefix_parts
     )
     if connector:
         spans += (
-            f"<span style='font-family:JetBrains Mono,monospace;font-size:.82rem;"
-            f"white-space:pre;color:{connector_color};'>{connector}</span>"
+            f"<span style='color:{connector_color};white-space:pre;'>{connector}</span>"
         )
-    return spans
+    if not spans:
+        return ""
+    return (
+        f"<span style='display:inline-flex;align-items:center;"
+        f"white-space:nowrap;font-family:JetBrains Mono,monospace;"
+        f"font-size:.82rem;'>{spans}</span>"
+    )
 
 def _render_node(node, conditions, prefix_parts=None, is_last=True,
                  is_root=False, parent_op=None):
@@ -283,14 +290,15 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True,
     prefix_len      = sum(len(t) for t, _ in prefix_parts) + len(connector)
     prefix_html     = _build_prefix_html(prefix_parts, connector, connector_color)
 
-    # Prefix column width — slightly generous so monospace chars fit on mobile
-    w = max(prefix_len * 0.16, 0.5)
+    # Prefix column width — 0.3 per char ensures enough room on mobile
+    # (8 chars × 0.3 = 2.4 → ~80px on mobile, monospace needs ~64px)
+    w = max(prefix_len * 0.3, 0.6)
 
     def _prefix_div(html):
-        """Prefix rendered with nowrap so spans never break between │ and ├──."""
+        """Prefix in a no-wrap, overflow-visible div so it never wraps."""
         return (
             f"<div style='padding-top:8px;line-height:1;"
-            f"white-space:nowrap;overflow:visible;'>{html}</div>"
+            f"overflow:visible;'>{html}</div>"
         )
 
     # ── LEAF ───────────────────────────────────────────────────────────────────
