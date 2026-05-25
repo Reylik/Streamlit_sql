@@ -271,55 +271,66 @@ def _build_prefix_html(prefix_parts, connector, connector_color):
         f"font-size:.82rem;'>{spans}</span>"
     )
 
-def _render_node(node, conditions, prefix_parts=None, is_last=True,
-                 is_root=False, parent_op=None):
-    if prefix_parts is None:
-        prefix_parts = []
-
-    connector       = "" if is_root else ("└── " if is_last else "├── ")
-    connector_color = BRANCH_STYLES[parent_op]["color"] if parent_op else NEUTRAL_CONNECTOR
-    prefix_len      = sum(len(t) for t, _ in prefix_parts) + len(connector)
-    prefix_html     = _build_prefix_html(prefix_parts, connector, connector_color)
-
-    def _prefix_div(html):
-        return f"<div style='padding-top:8px;line-height:1;overflow:visible;'>{html}</div>"
+def _render_node(node, conditions, depth=0, is_last=True, is_root=False, parent_op=None):
+    """
+    Indent-based tree renderer — no separate prefix column.
+    • Connector chars (├──, └──) are embedded directly in the content.
+    • CSS padding-left handles indentation → works on any screen width.
+    • No narrow column = no wrapping of │ / ├── on mobile.
+    """
+    indent_px  = depth * 22
+    conn_color = BRANCH_STYLES[parent_op]["color"] if parent_op else NEUTRAL_CONNECTOR
+    connector  = "" if is_root else ("└── " if is_last else "├── ")
 
     # ── LEAF ───────────────────────────────────────────────────────────────────
     if node["type"] == "leaf":
         idx = node["idx"]
-        if prefix_html:
-            w = max(prefix_len * 0.3, 0.6)
-            ca, cb = st.columns([w, max(9 - w, 1)])
-            ca.markdown(_prefix_div(prefix_html), unsafe_allow_html=True)
-            cb.markdown(
-                f"<div style='padding-top:6px;'>{_leaf_html(conditions, idx)}</div>",
-                unsafe_allow_html=True)
-        else:
-            st.markdown(_leaf_html(conditions, idx), unsafe_allow_html=True)
+        conn_span = (
+            f"<span style='color:{conn_color};font-family:JetBrains Mono,monospace;"
+            f"white-space:pre;font-size:.82rem;'>{connector}</span>"
+        ) if connector else ""
+        st.markdown(
+            f"<div style='margin-left:{indent_px}px;padding:4px 0;"
+            f"display:flex;align-items:center;gap:2px;'>"
+            f"{conn_span}{_leaf_html(conditions, idx)}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
     # ── BRANCH ─────────────────────────────────────────────────────────────────
     else:
         op        = node["op"]
         right_idx = node["right"]["idx"]
+        s         = BRANCH_STYLES[op]
+        uid       = f"bm{right_idx}"
+        # Connector chars embedded in button label → always on same line
+        btn_label = f"{connector}{op}" if connector else op
 
-        if prefix_html:
-            w = max(prefix_len * 0.3, 0.6)
-            ca, cb = st.columns([w, max(9 - w, 1)])
-            ca.markdown(_prefix_div(prefix_html), unsafe_allow_html=True)
-            with cb:
-                _branch_button(op, right_idx)
-        else:
-            _branch_button(op, right_idx)
+        st.markdown(
+            f'<div id="{uid}"></div>'
+            f"<style>"
+            f"div.element-container:has(#{uid})+div.element-container{{"
+            f"padding-left:{indent_px}px!important;}}"
+            f"div.element-container:has(#{uid})+div.element-container button{{"
+            f"background:{s['bg']}!important;color:{s['color']}!important;"
+            f"border:1.5px solid {s['border']}!important;"
+            f"font-family:'JetBrains Mono',monospace!important;"
+            f"font-size:.82rem!important;font-weight:700!important;"
+            f"width:auto!important;border-radius:5px!important;"
+            f"box-shadow:0 0 8px {s['border']}55!important;"
+            f"padding:4px 14px!important;}}"
+            f"div.element-container:has(#{uid})+div.element-container button:hover{{"
+            f"filter:brightness(1.3)!important;transform:translateY(-1px)!important;}}"
+            f"</style>",
+            unsafe_allow_html=True,
+        )
+        if st.button(btn_label, key=f"treeop_{right_idx}",
+                     help="Cliquer pour basculer ET / OU"):
+            st.session_state.conditions[right_idx]["join_op"] = "OU" if op == "ET" else "ET"
+            st.rerun()
 
-        if is_root:
-            new_prefix = prefix_parts
-        elif not is_last:
-            new_prefix = prefix_parts + [("│   ", connector_color)]
-        else:
-            new_prefix = prefix_parts + [("    ", connector_color)]
-
-        _render_node(node["left"],  conditions, new_prefix, is_last=False, parent_op=op)
-        _render_node(node["right"], conditions, new_prefix, is_last=True,  parent_op=op)
+        _render_node(node["left"],  conditions, depth+1, is_last=False, parent_op=op)
+        _render_node(node["right"], conditions, depth+1, is_last=True,  parent_op=op)
 
 
 def _branch_button(op, right_idx):
@@ -371,7 +382,7 @@ def render_tree(conditions, table):
             unsafe_allow_html=True,
         )
         return
-    _render_node(tree, conditions, prefix_parts=[], is_last=True, is_root=True, parent_op=None)
+    _render_node(tree, conditions, depth=0, is_last=True, is_root=True, parent_op=None)
 
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
