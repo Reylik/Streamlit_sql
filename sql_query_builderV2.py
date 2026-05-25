@@ -220,15 +220,13 @@ def build_query_display(table, conditions):
     where = _sql_from_tree(build_tree(conditions), conditions, [], True)
     return f"SELECT *\nFROM {table}\nWHERE {where}"
 
-# ══════════════════════════════════════════════════════════════════════════════
-# TREE RENDERER — mixes st.markdown (leaves) and st.button (branches)
-#
-# Each row is rendered using st.columns:
-#   [ prefix column ]  |  [ node content ]
-#
-# The prefix column width scales with indentation depth.
-# Branch nodes become real Streamlit buttons → clicking toggles ET/OU.
-# ══════════════════════════════════════════════════════════════════════════════
+# Palette centralisée ET=rouge / OU=bleu
+BRANCH_STYLES = {
+    "ET": {"color": "#fca5a5", "bg": "#450a0a", "border": "#991b1b"},
+    "OU": {"color": "#93c5fd", "bg": "#172554", "border": "#1d4ed8"},
+}
+NEUTRAL_CONNECTOR = "#475569"
+
 def _leaf_html(conditions, idx):
     c = conditions[idx]
     sym, fn = OPERATORS[c["operator"]]
@@ -241,29 +239,55 @@ def _leaf_html(conditions, idx):
         f"</span>"
     )
 
-def _prefix_html(prefix, connector):
-    """Monospace tree-connector text."""
-    txt = prefix + connector
-    if not txt:
-        return ""
-    return (
-        f"<div style='padding-top:8px;font-family:JetBrains Mono,monospace;"
-        f"color:#334155;white-space:pre;font-size:.82rem;line-height:1;'>{txt}</div>"
+def _build_prefix_html(prefix_parts, connector, connector_color):
+    """Build colored monospace prefix + connector as an HTML string."""
+    spans = "".join(
+        f"<span style='font-family:JetBrains Mono,monospace;font-size:.82rem;"
+        f"white-space:pre;color:{c};'>{t}</span>"
+        for t, c in prefix_parts
     )
+    if connector:
+        spans += (
+            f"<span style='font-family:JetBrains Mono,monospace;font-size:.82rem;"
+            f"white-space:pre;color:{connector_color};'>{connector}</span>"
+        )
+    return spans
 
-def _render_node(node, conditions, prefix="", is_last=True, is_root=False):
-    """Recursively render one tree node."""
-    connector    = "" if is_root else ("└── " if is_last else "├── ")
-    child_prefix = prefix + ("    " if is_last else "│   ")
+def _render_node(node, conditions, prefix_parts=None, is_last=True,
+                 is_root=False, parent_op=None):
+    """
+    Recursively render the tree mixing st.markdown (leaves) and st.button (branches).
 
+    prefix_parts : list of (text, color) — accumulated monospace prefix chars,
+                   each colored by the branch that created that indentation level.
+    parent_op    : "ET"|"OU"|None — the operator of the direct parent branch,
+                   used to color the connector drawn before THIS node.
+    
+    Color rules
+    ───────────
+    • Connector (├── / └──) before a node  → parent branch color
+    • Bar (│   ) added for THIS branch's open level → THIS branch's color
+      (represents "this branch still has a right child coming")
+    """
+    if prefix_parts is None:
+        prefix_parts = []
+
+    connector       = "" if is_root else ("└── " if is_last else "├── ")
+    connector_color = BRANCH_STYLES[parent_op]["color"] if parent_op else NEUTRAL_CONNECTOR
+    prefix_len      = sum(len(t) for t, _ in prefix_parts) + len(connector)
+
+    # Build the full colored prefix HTML for this row
+    prefix_html = _build_prefix_html(prefix_parts, connector, connector_color)
+
+    # ── LEAF ───────────────────────────────────────────────────────────────────
     if node["type"] == "leaf":
-        # Pure HTML row — no interactivity needed
-        full_pre = prefix + connector
-        if full_pre:
-            # split: [narrow prefix col] | [leaf content]
-            w = max(len(full_pre) * 0.14, 0.4)
+        if prefix_html:
+            w = max(prefix_len * 0.135, 0.35)
             ca, cb = st.columns([w, max(9 - w, 1)])
-            ca.markdown(_prefix_html("", full_pre), unsafe_allow_html=True)
+            ca.markdown(
+                f"<div style='padding-top:8px;line-height:1;'>{prefix_html}</div>",
+                unsafe_allow_html=True,
+            )
             cb.markdown(
                 f"<div style='padding-top:6px;'>{_leaf_html(conditions, node['idx'])}</div>",
                 unsafe_allow_html=True,
@@ -271,38 +295,50 @@ def _render_node(node, conditions, prefix="", is_last=True, is_root=False):
         else:
             st.markdown(_leaf_html(conditions, node["idx"]), unsafe_allow_html=True)
 
+    # ── BRANCH ─────────────────────────────────────────────────────────────────
     else:
-        # Branch node — Streamlit button
         op        = node["op"]
-        right_idx = node["right"]["idx"]   # unique per branch in a left-leaning tree
-        full_pre  = prefix + connector
-        is_et     = (op == "ET")
-        btn_label = op
+        right_idx = node["right"]["idx"]
+        node_color = BRANCH_STYLES[op]["color"]   # THIS branch's color
 
-        if full_pre:
-            w = max(len(full_pre) * 0.14, 0.4)
+        # Render button row
+        if prefix_html:
+            w = max(prefix_len * 0.135, 0.35)
             ca, cb = st.columns([w, max(9 - w, 1)])
-            ca.markdown(_prefix_html("", full_pre), unsafe_allow_html=True)
+            ca.markdown(
+                f"<div style='padding-top:8px;line-height:1;'>{prefix_html}</div>",
+                unsafe_allow_html=True,
+            )
             with cb:
-                _branch_button(btn_label, right_idx, is_et)
+                _branch_button(op, right_idx)
         else:
-            _branch_button(btn_label, right_idx, is_et)
+            _branch_button(op, right_idx)
 
-        # Recurse: left first (is_last=False), then right (is_last=True)
-        _render_node(node["left"],  conditions, child_prefix, is_last=False)
-        _render_node(node["right"], conditions, child_prefix, is_last=True)
+        # Build child prefix_parts:
+        #   • Root adds nothing (no parent to keep "open")
+        #   • Non-last child: add │   colored with THIS branch's color
+        #     (the bar means "this branch still has its right child coming")
+        #   • Last child: add spaces (invisible, color doesn't matter)
+        if is_root:
+            new_prefix = prefix_parts
+        elif not is_last:
+            new_prefix = prefix_parts + [(f"│   ", node_color)]
+        else:
+            new_prefix = prefix_parts + [("    ", node_color)]
+
+        _render_node(node["left"],  conditions, new_prefix, is_last=False, parent_op=op)
+        _render_node(node["right"], conditions, new_prefix, is_last=True,  parent_op=op)
 
 
-def _branch_button(label, right_idx, is_et):
-    """Render a styled ET/OU toggle button. ET=rouge, OU=bleu.
-    
-    CSS trick: inject a marker <div id="..."> + style in ONE st.markdown call,
-    then use element-container:has(#marker) + element-container button to target
-    the very next button rendered by Streamlit.
+def _branch_button(op, right_idx):
+    """Render a colored ET/OU toggle button (ET=rouge, OU=bleu).
+
+    CSS trick: a <div id="marker"> + <style> in ONE st.markdown → the style uses
+    div.element-container:has(#marker) + div.element-container button
+    to target exactly the next Streamlit button element.
     """
-    bg     = "#450a0a" if is_et else "#172554"
-    color  = "#fca5a5" if is_et else "#93c5fd"
-    border = "#991b1b" if is_et else "#1d4ed8"
+    s      = BRANCH_STYLES[op]
+    bg, color, border = s["bg"], s["color"], s["border"]
     marker = f"tbtn-{right_idx}"
     st.markdown(
         f'<div id="{marker}"></div>'
@@ -313,20 +349,18 @@ def _branch_button(label, right_idx, is_et):
         f"font-family:'JetBrains Mono',monospace!important;"
         f"font-size:.82rem!important;font-weight:700!important;"
         f"padding:3px 16px!important;border-radius:5px!important;"
-        f"box-shadow:0 0 8px {border}55!important;"
-        f"min-height:0!important;}}"
+        f"box-shadow:0 0 8px {border}55!important;min-height:0!important;}}"
         f"div.element-container:has(#{marker}) + div.element-container button:hover{{"
-        f"filter:brightness(1.25)!important;transform:translateY(-1px)!important;}}"
+        f"filter:brightness(1.3)!important;transform:translateY(-1px)!important;}}"
         f"</style>",
         unsafe_allow_html=True,
     )
-    if st.button(label, key=f"treeop_{right_idx}", help="Cliquer pour basculer ET / OU"):
-        st.session_state.conditions[right_idx]["join_op"] = "OU" if label == "ET" else "ET"
+    if st.button(op, key=f"treeop_{right_idx}", help="Cliquer pour basculer ET / OU"):
+        st.session_state.conditions[right_idx]["join_op"] = "OU" if op == "ET" else "ET"
         st.rerun()
 
 
 def render_tree(conditions, table):
-    # Header card (pure HTML — static)
     st.markdown(
         f"<div class='tree-wrap'>"
         f"<span style='color:#94a3b8;font-size:.72rem;font-family:JetBrains Mono,monospace;"
@@ -345,7 +379,7 @@ def render_tree(conditions, table):
             unsafe_allow_html=True,
         )
         return
-    _render_node(tree, conditions, prefix="", is_last=True, is_root=True)
+    _render_node(tree, conditions, prefix_parts=[], is_last=True, is_root=True, parent_op=None)
 
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
@@ -514,40 +548,120 @@ with col_right:
     preview = build_query_display(st.session_state.selected_table, st.session_state.conditions)
     st.markdown(f"<div class='sql-display'>{preview}</div>", unsafe_allow_html=True)
 
-@st.dialog("🔎 Filtrer sur cette valeur")
-def cell_filter_dialog(col_name, cell_value, table_cols):
+@st.dialog("🔎 Explorer cette valeur")
+def cell_filter_dialog(col_name, cell_value):
+    """Pop-up déclenché au clic sur une cellule du tableau de résultats."""
+    str_value = str(cell_value)
+
+    # ── En-tête ────────────────────────────────────────────────────────────────
     st.markdown(
         f"<div style='background:#13151d;border:1px solid #1e2130;border-radius:10px;"
-        f"padding:14px 18px;margin-bottom:16px;'>"
-        f"<span style='color:#94a3b8;font-size:.75rem;text-transform:uppercase;"
+        f"padding:12px 16px;margin-bottom:16px;'>"
+        f"<span style='color:#94a3b8;font-size:.72rem;text-transform:uppercase;"
         f"letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Cellule sélectionnée</span><br>"
-        f"<span style='font-family:JetBrains Mono,monospace;'>"
+        f"<span style='font-family:JetBrains Mono,monospace;font-size:.92rem;'>"
         f"<b style='color:#a5f3fc;'>{col_name}</b>"
         f" <span style='color:#fbbf24;'>=</span>"
-        f" <span style='color:#86efac;'>«{cell_value}»</span>"
+        f" <span style='color:#86efac;'>«{str_value}»</span>"
         f"</span></div>",
         unsafe_allow_html=True,
     )
-    op  = st.selectbox("Opérateur de recherche", OP_LABELS, key="dlg_op")
+
+    # ── Tables qui contiennent cette colonne ───────────────────────────────────
+    tables_with_col = [t for t, cols in TABLES.items() if col_name in cols]
+    target_table = st.selectbox(
+        "Table cible",
+        tables_with_col,
+        index=tables_with_col.index(st.session_state.selected_table)
+              if st.session_state.selected_table in tables_with_col else 0,
+        key="dlg_table",
+    )
+
+    # ── Opérateur ──────────────────────────────────────────────────────────────
+    op = st.selectbox("Opérateur de recherche", OP_LABELS, key="dlg_op")
+
+    sql_sym, value_fn = OPERATORS[op]
+    transformed_val   = value_fn(str_value)
+
+    # SQL preview
+    st.markdown(
+        f"<div style='background:#0a0c12;border:1px solid #1e2130;border-left:3px solid #6366f1;"
+        f"border-radius:8px;padding:8px 14px;font-family:JetBrains Mono,monospace;"
+        f"font-size:.8rem;color:#a5f3fc;margin:8px 0 14px;'>"
+        f"SELECT * FROM <b>{target_table}</b>"
+        f" WHERE <b style='color:#a5f3fc'>{col_name}</b>"
+        f" <span style='color:#fbbf24'>{sql_sym}</span>"
+        f" <span style='color:#86efac'>'{transformed_val}'</span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ── Bouton 1 : Lancer la requête ───────────────────────────────────────────
+    if st.button("▶ Lancer la requête", use_container_width=True, type="primary", key="dlg_run"):
+        conn = get_connection()
+        q    = f"SELECT * FROM {target_table} WHERE {col_name} {sql_sym} ?"
+        try:
+            st.session_state.results        = pd.read_sql_query(q, conn, params=[transformed_val])
+            st.session_state.selected_table = target_table
+            # Remplace les conditions par ce filtre unique
+            st.session_state.conditions = [{
+                "column":   col_name,
+                "operator": op,
+                "value":    str_value,
+                "join_op":  "ET",
+            }]
+        except Exception as e:
+            st.error(f"Erreur SQL : {e}")
+            return
+        st.rerun()
+
+    # ── Bouton 2 : Compter ─────────────────────────────────────────────────────
+    if st.button("🔢 Estimer le nombre de résultats (COUNT)", use_container_width=True, key="dlg_count"):
+        conn = get_connection()
+        q    = f"SELECT COUNT(*) AS total FROM {target_table} WHERE {col_name} {sql_sym} ?"
+        try:
+            result = pd.read_sql_query(q, conn, params=[transformed_val])
+            count  = int(result["total"].iloc[0])
+            st.markdown(
+                f"<div style='background:#0f2a1a;border:1px solid #166534;border-radius:8px;"
+                f"padding:12px 18px;text-align:center;margin-top:8px;'>"
+                f"<span style='color:#86efac;font-size:.75rem;text-transform:uppercase;"
+                f"letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Résultats estimés</span><br>"
+                f"<span style='color:#4ade80;font-size:2rem;font-weight:800;"
+                f"font-family:JetBrains Mono,monospace;'>{count}</span>"
+                f"<span style='color:#86efac;font-size:.85rem;'> ligne(s)</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        except Exception as e:
+            st.error(f"Erreur SQL : {e}")
+
+    # ── Séparateur + ajout à l'arbre ───────────────────────────────────────────
+    st.divider()
+    st.markdown(
+        "<span style='color:#94a3b8;font-size:.8rem;'>Ou ajouter comme condition dans l'arbre :</span>",
+        unsafe_allow_html=True,
+    )
     if st.session_state.conditions:
-        join = st.radio("Lier à l'arbre avec", ["ET", "OU"], horizontal=True, key="dlg_join")
+        join = st.radio("Lier avec", ["ET", "OU"], horizontal=True, key="dlg_join")
     else:
         join = "ET"
-    if st.button("➕ Ajouter comme condition", use_container_width=True, type="primary"):
+    if st.button("➕ Ajouter à l'arbre de recherche", use_container_width=True, key="dlg_add"):
         st.session_state.conditions.append({
             "column":   col_name,
             "operator": op,
-            "value":    str(cell_value),
+            "value":    str_value,
             "join_op":  join,
         })
         st.rerun()
+
 
 # ══ RESULTS ═══════════════════════════════════════════════════════════════════
 if st.session_state.results is not None:
     df = st.session_state.results
     st.markdown("---")
     st.markdown("### 📊 Résultats")
-    st.caption("💡 Cliquez sur une cellule pour créer un filtre à partir de sa valeur.")
+    st.caption("💡 Cliquez sur une cellule pour explorer sa valeur : lancer une requête, compter, ou ajouter au filtre.")
     m1, m2, m3 = st.columns(3)
     m1.metric("Lignes", len(df))
     m2.metric("Colonnes", len(df.columns))
@@ -562,15 +676,11 @@ if st.session_state.results is not None:
             on_select="rerun",
             selection_mode="single-cell",
         )
-        sel = event.selection if hasattr(event, "selection") else {}
+        sel  = event.selection if hasattr(event, "selection") else {}
         rows = sel.get("rows", [])
         cols = sel.get("columns", [])
         if rows and cols:
-            row_i = rows[0]
-            col_i = cols[0]
-            col_name   = df.columns[col_i]
-            cell_value = df.iloc[row_i, col_i]
-            cell_filter_dialog(col_name, cell_value, list(df.columns))
+            cell_filter_dialog(df.columns[cols[0]], df.iloc[rows[0], cols[0]])
 
         st.download_button("⬇ Télécharger CSV",
             df.to_csv(index=False).encode("utf-8"),
