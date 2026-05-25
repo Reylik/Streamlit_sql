@@ -164,7 +164,7 @@ OPERATORS = {
 OP_LABELS = list(OPERATORS.keys())
 
 # ── State ──────────────────────────────────────────────────────────────────────
-for k, v in [("conditions",[]),("selected_table","employes"),("results",None),("editing",{}),("tree_editing",None)]:
+for k, v in [("conditions",[]),("selected_table","employes"),("results",None),("editing",{})]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -273,124 +273,41 @@ def _build_prefix_html(prefix_parts, connector, connector_color):
 
 def _render_node(node, conditions, prefix_parts=None, is_last=True,
                  is_root=False, parent_op=None):
-    """
-    Recursively render the tree mixing st.markdown (leaves) and st.button (branches).
-
-    Fix: all non-root rows use the SAME 3-column layout [prefix_w, content_w, EDIT_W]
-    so proportions are identical for branches and leaves — no misalignment.
-    prefix div uses white-space:nowrap so │ and ├── never break across lines.
-    """
     if prefix_parts is None:
         prefix_parts = []
-
-    EDIT_W = 0.8   # fixed width for edit-button column (empty for branches)
 
     connector       = "" if is_root else ("└── " if is_last else "├── ")
     connector_color = BRANCH_STYLES[parent_op]["color"] if parent_op else NEUTRAL_CONNECTOR
     prefix_len      = sum(len(t) for t, _ in prefix_parts) + len(connector)
     prefix_html     = _build_prefix_html(prefix_parts, connector, connector_color)
 
-    # Prefix column width — 0.3 per char ensures enough room on mobile
-    # (8 chars × 0.3 = 2.4 → ~80px on mobile, monospace needs ~64px)
-    w = max(prefix_len * 0.3, 0.6)
-
     def _prefix_div(html):
-        """Prefix in a no-wrap, overflow-visible div so it never wraps."""
-        return (
-            f"<div style='padding-top:8px;line-height:1;"
-            f"overflow:visible;'>{html}</div>"
-        )
+        return f"<div style='padding-top:8px;line-height:1;overflow:visible;'>{html}</div>"
 
     # ── LEAF ───────────────────────────────────────────────────────────────────
     if node["type"] == "leaf":
-        idx     = node["idx"]
-        editing = (st.session_state.get("tree_editing") == idx)
-
-        if editing:
-            # Edit mode: prefix | [op selector, value input, ✓, ✕]
-            if prefix_html:
-                ca, cb = st.columns([w, max(9 - w + EDIT_W, 1)])
-                ca.markdown(_prefix_div(prefix_html), unsafe_allow_html=True)
-                edit_zone = cb
-            else:
-                edit_zone = st.container()
-
-            cond = conditions[idx]
-            with edit_zone:
-                e1, e2, e3, e4 = st.columns([3, 3, 0.7, 0.7])
-                with e1:
-                    new_op = st.selectbox("op", OP_LABELS,
-                        index=OP_LABELS.index(cond["operator"]),
-                        key=f"tree_eop_{idx}", label_visibility="collapsed")
-                with e2:
-                    new_val = st.text_input("val", value=cond["value"],
-                        key=f"tree_eval_{idx}", label_visibility="collapsed")
-                with e3:
-                    ok_m = f"treeok-{idx}"
-                    st.markdown(
-                        f'<div id="{ok_m}"></div><style>'
-                        f"div.element-container:has(#{ok_m})+div.element-container button{{"
-                        f"background:#14532d!important;color:#4ade80!important;"
-                        f"border:1px solid #16a34a!important;font-size:.85rem!important;"
-                        f"padding:4px 8px!important;min-height:0!important;}}</style>",
-                        unsafe_allow_html=True)
-                    if st.button("✓", key=f"tree_ok_{idx}"):
-                        st.session_state.conditions[idx]["operator"] = new_op
-                        st.session_state.conditions[idx]["value"] = new_val.strip() or cond["value"]
-                        st.session_state.tree_editing = None
-                        st.rerun()
-                with e4:
-                    cx_m = f"treecx-{idx}"
-                    st.markdown(
-                        f'<div id="{cx_m}"></div><style>'
-                        f"div.element-container:has(#{cx_m})+div.element-container button{{"
-                        f"background:#1e1e2e!important;color:#94a3b8!important;"
-                        f"border:1px solid #334155!important;font-size:.85rem!important;"
-                        f"padding:4px 8px!important;min-height:0!important;}}</style>",
-                        unsafe_allow_html=True)
-                    if st.button("✕", key=f"tree_cx_{idx}"):
-                        st.session_state.tree_editing = None
-                        st.rerun()
-
+        idx = node["idx"]
+        if prefix_html:
+            w = max(prefix_len * 0.3, 0.6)
+            ca, cb = st.columns([w, max(9 - w, 1)])
+            ca.markdown(_prefix_div(prefix_html), unsafe_allow_html=True)
+            cb.markdown(
+                f"<div style='padding-top:6px;'>{_leaf_html(conditions, idx)}</div>",
+                unsafe_allow_html=True)
         else:
-            # Normal display — SAME 3-col layout as branches: [prefix | leaf | edit]
-            if prefix_html:
-                ca, cb, cc = st.columns([w, max(9 - w, 1), EDIT_W])
-                ca.markdown(_prefix_div(prefix_html), unsafe_allow_html=True)
-                cb.markdown(
-                    f"<div style='padding-top:6px;'>{_leaf_html(conditions, idx)}</div>",
-                    unsafe_allow_html=True)
-            else:
-                cb, cc = st.columns([9, EDIT_W])
-                cb.markdown(_leaf_html(conditions, idx), unsafe_allow_html=True)
-
-            with cc:
-                pen_m = f"treepen-{idx}"
-                st.markdown(
-                    f'<div id="{pen_m}"></div><style>'
-                    f"div.element-container:has(#{pen_m})+div.element-container button{{"
-                    f"background:#1e1e2e!important;color:#94a3b8!important;"
-                    f"border:1px solid #334155!important;font-size:.75rem!important;"
-                    f"padding:3px 7px!important;min-height:0!important;border-radius:5px!important;}}"
-                    f"div.element-container:has(#{pen_m})+div.element-container button:hover{{"
-                    f"color:#e2e8f0!important;border-color:#6366f1!important;}}</style>",
-                    unsafe_allow_html=True)
-                if st.button("✏️", key=f"tree_pen_{idx}", help="Modifier ce critère"):
-                    st.session_state.tree_editing = idx
-                    st.rerun()
+            st.markdown(_leaf_html(conditions, idx), unsafe_allow_html=True)
 
     # ── BRANCH ─────────────────────────────────────────────────────────────────
     else:
-        op         = node["op"]
-        right_idx  = node["right"]["idx"]
+        op        = node["op"]
+        right_idx = node["right"]["idx"]
 
-        # Same 3-col layout as leaves: [prefix | branch-button | empty]
         if prefix_html:
-            ca, cb, cc = st.columns([w, max(9 - w, 1), EDIT_W])
+            w = max(prefix_len * 0.3, 0.6)
+            ca, cb = st.columns([w, max(9 - w, 1)])
             ca.markdown(_prefix_div(prefix_html), unsafe_allow_html=True)
             with cb:
                 _branch_button(op, right_idx)
-            # cc intentionally left empty
         else:
             _branch_button(op, right_idx)
 
