@@ -315,16 +315,17 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True,
             _branch_button(op, right_idx)
 
         # Build child prefix_parts:
-        #   • Root adds nothing (no parent to keep "open")
-        #   • Non-last child: add │   colored with THIS branch's color
-        #     (the bar means "this branch still has its right child coming")
-        #   • Last child: add spaces (invisible, color doesn't matter)
+        #   • Root adds nothing (no parent level to keep open)
+        #   • Non-last: add │   whose color = connector_color (= parent's color),
+        #     because the bar represents "the PARENT is still open, waiting for its
+        #     right child after this subtree".
+        #   • Last: add spaces (invisible)
         if is_root:
             new_prefix = prefix_parts
         elif not is_last:
-            new_prefix = prefix_parts + [(f"│   ", node_color)]
+            new_prefix = prefix_parts + [("│   ", connector_color)]
         else:
-            new_prefix = prefix_parts + [("    ", node_color)]
+            new_prefix = prefix_parts + [("    ", connector_color)]
 
         _render_node(node["left"],  conditions, new_prefix, is_last=False, parent_op=op)
         _render_node(node["right"], conditions, new_prefix, is_last=True,  parent_op=op)
@@ -681,6 +682,67 @@ if st.session_state.results is not None:
         cols = sel.get("columns", [])
         if rows and cols:
             cell_filter_dialog(df.columns[cols[0]], df.iloc[rows[0], cols[0]])
+
+        # ── Fallback mobile : sélection manuelle ──────────────────────────────
+        with st.expander("📱 Sélection manuelle (mobile / fallback)", expanded=False):
+            st.caption("Si le clic sur cellule ne fonctionne pas, utilisez ce panneau.")
+            fb_col = st.selectbox("Colonne", df.columns.tolist(), key="fb_col")
+            fb_val = st.selectbox(
+                "Valeur",
+                sorted(df[fb_col].dropna().astype(str).unique().tolist()),
+                key="fb_val",
+            )
+            fb_op  = st.selectbox("Opérateur", OP_LABELS, key="fb_op")
+            sql_sym_fb, value_fn_fb = OPERATORS[fb_op]
+            transformed_fb = value_fn_fb(fb_val)
+            st.markdown(
+                f"<div style='background:#0a0c12;border-left:3px solid #6366f1;"
+                f"border-radius:6px;padding:7px 12px;font-family:JetBrains Mono,monospace;"
+                f"font-size:.78rem;color:#a5f3fc;margin:6px 0;'>"
+                f"WHERE <b>{fb_col}</b> <span style='color:#fbbf24'>{sql_sym_fb}</span>"
+                f" <span style='color:#86efac'>'{transformed_fb}'</span></div>",
+                unsafe_allow_html=True,
+            )
+            # Which tables have this column?
+            tables_fb = [t for t, cols_t in TABLES.items() if fb_col in cols_t]
+            fb_table  = st.selectbox("Table cible", tables_fb, key="fb_table",
+                                     index=tables_fb.index(st.session_state.selected_table)
+                                     if st.session_state.selected_table in tables_fb else 0)
+            fa, fb_, fc = st.columns(3)
+            with fa:
+                if st.button("▶ Lancer", use_container_width=True, type="primary", key="fb_run"):
+                    conn = get_connection()
+                    q = f"SELECT * FROM {fb_table} WHERE {fb_col} {sql_sym_fb} ?"
+                    try:
+                        st.session_state.results        = pd.read_sql_query(q, conn, params=[transformed_fb])
+                        st.session_state.selected_table = fb_table
+                        st.session_state.conditions = [{
+                            "column": fb_col, "operator": fb_op,
+                            "value": fb_val, "join_op": "ET",
+                        }]
+                    except Exception as e:
+                        st.error(str(e))
+                    st.rerun()
+            with fb_:
+                if st.button("🔢 Compter", use_container_width=True, key="fb_count"):
+                    conn = get_connection()
+                    q = f"SELECT COUNT(*) AS total FROM {fb_table} WHERE {fb_col} {sql_sym_fb} ?"
+                    try:
+                        cnt = pd.read_sql_query(q, conn, params=[transformed_fb])["total"].iloc[0]
+                        st.success(f"{int(cnt)} ligne(s)")
+                    except Exception as e:
+                        st.error(str(e))
+            with fc:
+                if st.session_state.conditions:
+                    fb_join = st.radio("Lier", ["ET","OU"], horizontal=True, key="fb_join")
+                else:
+                    fb_join = "ET"
+                if st.button("➕ Ajouter", use_container_width=True, key="fb_add"):
+                    st.session_state.conditions.append({
+                        "column": fb_col, "operator": fb_op,
+                        "value": fb_val, "join_op": fb_join,
+                    })
+                    st.rerun()
 
         st.download_button("⬇ Télécharger CSV",
             df.to_csv(index=False).encode("utf-8"),
