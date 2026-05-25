@@ -578,6 +578,9 @@ if st.session_state.results is not None:
     if cnt is None:
         st.info(f"Calcul du lien avec **{other_table}** en cours…")
 
+    elif cnt == "done":
+        pass  # enrichissement déjà effectué, rien à afficher
+
     elif cnt == 0:
         st.markdown(
             f"<div style='background:#1a1d27;border:1px solid #2a2d3e;border-radius:10px;"
@@ -613,7 +616,7 @@ if st.session_state.results is not None:
                     st.session_state.last_params,
                 )
                 st.session_state.results      = enriched
-                st.session_state.enrich_count = None   # hide button after enrichment
+                st.session_state.enrich_count = "done"   # enrichissement terminé
                 st.rerun()
             except Exception as e:
                 st.error(f"Erreur enrichissement : {e}")
