@@ -227,15 +227,26 @@ BRANCH_STYLES = {
 }
 NEUTRAL_CONNECTOR = "#475569"
 
+# Langage naturel pour l'arbre (colonne, op, valeur)
+OP_NATURAL = {
+    "Contient":     ("contient",     True),   # True = valeur entre guillemets
+    "Commence par": ("commence par", True),
+    "Finit par":    ("finit par",    True),
+    "Égal à":       ("est",          True),
+    "Différent de": ("n'est pas",    True),
+    "Supérieur à":  (">",            False),
+    "Inférieur à":  ("<",            False),
+}
+
 def _leaf_html(conditions, idx):
-    c = conditions[idx]
-    sym, fn = OPERATORS[c["operator"]]
-    dv = fn(c["value"])
+    c        = conditions[idx]
+    op_str, quoted = OP_NATURAL[c["operator"]]
+    val_str  = f"«\u202f{c['value']}\u202f»" if quoted else c["value"]
     return (
         f"<span class='t-leaf'>"
         f"<b style='color:#a5f3fc;'>{c['column']}</b> "
-        f"<span style='color:#fbbf24;'>{sym}</span> "
-        f"<span style='color:#86efac;'>'{dv}'</span>"
+        f"<span style='color:#fbbf24;'>{op_str}</span> "
+        f"<span style='color:#86efac;'>{val_str}</span>"
         f"</span>"
     )
 
@@ -315,16 +326,17 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True,
             _branch_button(op, right_idx)
 
         # Build child prefix_parts:
-        #   • Root adds nothing (no parent to keep "open")
-        #   • Non-last child: add │   colored with THIS branch's color
-        #     (the bar means "this branch still has its right child coming")
-        #   • Last child: add spaces (invisible, color doesn't matter)
+        #   • Root adds nothing (no parent level to keep open)
+        #   • Non-last: add │   whose color = connector_color (= parent's color),
+        #     because the bar represents "the PARENT is still open, waiting for its
+        #     right child after this subtree".
+        #   • Last: add spaces (invisible)
         if is_root:
             new_prefix = prefix_parts
         elif not is_last:
-            new_prefix = prefix_parts + [(f"│   ", node_color)]
+            new_prefix = prefix_parts + [("│   ", connector_color)]
         else:
-            new_prefix = prefix_parts + [("    ", node_color)]
+            new_prefix = prefix_parts + [("    ", connector_color)]
 
         _render_node(node["left"],  conditions, new_prefix, is_last=False, parent_op=op)
         _render_node(node["right"], conditions, new_prefix, is_last=True,  parent_op=op)
@@ -615,26 +627,33 @@ def cell_filter_dialog(col_name, cell_value):
             return
         st.rerun()
 
-    # ── Bouton 2 : Compter ─────────────────────────────────────────────────────
-    if st.button("🔢 Estimer le nombre de résultats (COUNT)", use_container_width=True, key="dlg_count"):
-        conn = get_connection()
-        q    = f"SELECT COUNT(*) AS total FROM {target_table} WHERE {col_name} {sql_sym} ?"
-        try:
-            result = pd.read_sql_query(q, conn, params=[transformed_val])
-            count  = int(result["total"].iloc[0])
-            st.markdown(
-                f"<div style='background:#0f2a1a;border:1px solid #166534;border-radius:8px;"
-                f"padding:12px 18px;text-align:center;margin-top:8px;'>"
-                f"<span style='color:#86efac;font-size:.75rem;text-transform:uppercase;"
-                f"letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Résultats estimés</span><br>"
-                f"<span style='color:#4ade80;font-size:2rem;font-weight:800;"
-                f"font-family:JetBrains Mono,monospace;'>{count}</span>"
-                f"<span style='color:#86efac;font-size:.85rem;'> ligne(s)</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-        except Exception as e:
-            st.error(f"Erreur SQL : {e}")
+    # ── Bouton 2 : Compter — résultat s'affiche dans le bouton lui-même ─────────
+    count_key = f"cnt_{target_table}__{col_name}__{op}__{str_value}"
+    if count_key in st.session_state:
+        count = st.session_state[count_key]
+        st.markdown(
+            f"<div style='background:#14532d;border:2px solid #16a34a;border-radius:8px;"
+            f"padding:12px;text-align:center;cursor:default;margin-bottom:4px;'>"
+            f"<span style='color:#86efac;font-size:.72rem;text-transform:uppercase;"
+            f"letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Résultats estimés</span><br>"
+            f"<span style='color:#4ade80;font-size:2.2rem;font-weight:800;"
+            f"font-family:JetBrains Mono,monospace;line-height:1.3;'>{count}</span>"
+            f"<span style='color:#86efac;font-size:.85rem;'> ligne(s)</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        if st.button("🔢 Estimer le nombre de résultats (COUNT)",
+                     use_container_width=True, key="dlg_count"):
+            conn = get_connection()
+            q    = f"SELECT COUNT(*) AS total FROM {target_table} WHERE {col_name} {sql_sym} ?"
+            try:
+                res   = pd.read_sql_query(q, conn, params=[transformed_val])
+                count = int(res["total"].iloc[0])
+                st.session_state[count_key] = count
+            except Exception as e:
+                st.error(f"Erreur SQL : {e}")
+            st.rerun()
 
     # ── Séparateur + ajout à l'arbre ───────────────────────────────────────────
     st.divider()
