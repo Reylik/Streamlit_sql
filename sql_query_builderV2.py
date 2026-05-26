@@ -196,7 +196,7 @@ def build_date_value(year: int, month: int, day: int) -> str:
 # ── State ──────────────────────────────────────────────────────────────────────
 for k, v in [("conditions",[]),("selected_table","clients"),
              ("results",None),("enrich_count",None),
-             ("last_where",""),("last_params",[]),("editing_leaf",None)]:
+             ("last_where",""),("last_params",[]),("editing",{})]:
     if k not in st.session_state:
         st.session_state[k] = v
 
