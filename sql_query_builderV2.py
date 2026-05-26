@@ -216,13 +216,15 @@ def _sql_from_tree(node, conditions, params, display):
     if node["type"] == "leaf":
         c = conditions[node["idx"]]
         if c.get("is_bulk"):
-            values = c["values"]
+            sym, fn = OPERATORS[c["operator"]]
             if display:
-                vals_str = ", ".join(f"'{v}'" for v in values)
-                return f"{c['column']} IN ({vals_str})"
-            placeholders = ", ".join("?" * len(values))
-            params.extend(values)
-            return f"{c['column']} IN ({placeholders})"
+                clauses = [f"{c['column']} {sym} '{fn(v)}'" for v in c["values"]]
+            else:
+                clauses = []
+                for v in c["values"]:
+                    clauses.append(f"{c['column']} {sym} ?")
+                    params.append(fn(v))
+            return "(" + " OR ".join(clauses) + ")"
         sym, fn = OPERATORS[c["operator"]]
         val = fn(c["value"])
         if display: return f"{c['column']} {sym} '{val}'"
@@ -279,7 +281,6 @@ NEUTRAL = "#475569"
 OP_NATURAL = {
     "Contient":"contient","Commence par":"commence par","Finit par":"finit par",
     "Égal à":"est","Différent de":"n'est pas","Supérieur à":">","Inférieur à":"<",
-    "Dans la liste":"dans",
 }
 
 def _date_label(val):
@@ -297,16 +298,16 @@ def _leaf_html(conditions, idx):
                 f"<span style='color:#fbbf24;'>en</span> "
                 f"<span style='color:#86efac;'>{_date_label(c['value'])}</span></span>")
     if c.get("is_bulk"):
-        values = c["values"]
-        n = len(values)
-        MAX_SHOWN = 3
-        preview = " · ".join(f"«{v}»" for v in values[:MAX_SHOWN])
-        suffix  = f" <span style='color:#64748b;'>+{n - MAX_SHOWN} autres</span>" if n > MAX_SHOWN else ""
+        values  = c["values"]
+        n       = len(values)
+        op_str  = OP_NATURAL.get(c["operator"], c["operator"])
+        shown   = values[:3]
+        preview = " · ".join(f"«{v}»" for v in shown)
+        suffix  = f" <span style='color:#64748b;font-size:.75rem;'>+{n-3} autres</span>" if n > 3 else ""
         return (f"<span class='t-leaf'>"
                 f"<b style='color:#a5f3fc;'>{c['column']}</b> "
-                f"<span style='color:#fbbf24;'>dans</span> "
+                f"<span style='color:#fbbf24;'>{op_str}</span> "
                 f"<span style='color:#86efac;'>[{preview}{suffix}]</span>"
-                f"<span style='color:#475569;font-size:.72rem;margin-left:6px;'>{n} valeur{'s' if n>1 else ''}</span>"
                 f"</span>")
     op_str = OP_NATURAL.get(c["operator"], c["operator"])
     return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{c['column']}</b> "
@@ -349,27 +350,30 @@ def _render_leaf_editor(conditions, idx):
     if is_bulk:
         current_text = "\n".join(cond["values"])
         st.text_area("Valeurs", value=current_text, key=f"ev_{idx}",
-                     height=100, label_visibility="collapsed")
-        e1, e2 = st.columns([1, 1])
+                     height=110, label_visibility="collapsed",
+                     placeholder="Une valeur par ligne, ou séparées par des virgules")
+        e1, e2, e3 = st.columns([2, 1, 1])
         with e1:
-            if st.button("✓ Valider", key=f"eok_{idx}", use_container_width=True):
+            new_op_bulk = st.selectbox("Op", OP_LABELS,
+                                       index=OP_LABELS.index(cond["operator"]),
+                                       key=f"eop_{idx}", label_visibility="collapsed")
+        with e2:
+            if st.button("✓", key=f"eok_{idx}", help="Valider", use_container_width=True):
                 raw    = st.session_state.get(f"ev_{idx}", current_text)
                 values = [v.strip() for v in re.split(r"[,\n]", raw) if v.strip()]
                 if values:
-                    st.session_state.conditions[idx]["values"] = values
-                    st.session_state.conditions[idx]["value"]  = ", ".join(values)
+                    st.session_state.conditions[idx]["values"]   = values
+                    st.session_state.conditions[idx]["value"]    = ", ".join(values)
+                    st.session_state.conditions[idx]["operator"] = st.session_state.get(f"eop_{idx}", cond["operator"])
                     st.session_state.editing.pop(idx, None)
                     st.rerun()
                 else:
                     st.warning("Entrez au moins une valeur.")
-        with e2:
-            if st.button("🗑 Supprimer", key=f"edel_{idx}", use_container_width=True):
+        with e3:
+            if st.button("🗑", key=f"edel_{idx}", help="Supprimer", use_container_width=True):
                 st.session_state.conditions.pop(idx)
                 st.session_state.editing.pop(idx, None)
                 st.rerun()
-        if st.button("✗ Annuler", key=f"ecancel_{idx}"):
-            st.session_state.editing.pop(idx, None)
-            st.rerun()
 
     elif is_date:
         parts     = cond["value"].split("-")
@@ -622,28 +626,21 @@ with fb:
         st.markdown("<span style='color:#a78bfa;font-size:.78rem;'>📅 Colonne date</span>",
                     unsafe_allow_html=True)
     else:
-        is_bulk = st.toggle("Valeurs multiples", key="bulk_mode", value=False,
-                            help="Coller une liste de valeurs séparées par des virgules ou des sauts de ligne")
-        if not is_bulk:
-            new_op = st.selectbox("Opérateur", OP_LABELS, key="new_op",
-                                  label_visibility="collapsed")
+        new_op = st.selectbox("Opérateur", OP_LABELS, key="new_op", label_visibility="collapsed")
 with fc:
     if is_date:
         d1, d2, d3 = st.columns(3)
         new_year  = d1.number_input("Année *", 1900, 2100, 2023, 1, key="new_year")
         new_month = d2.number_input("Mois",    0,    12,   0,    1, key="new_month", help="0 = non précisé")
         new_day   = d3.number_input("Jour",    0,    31,   0,    1, key="new_day",   help="0 = non précisé")
-    elif is_bulk:
-        new_bulk_text = st.text_area(
-            "Valeurs",
-            key="new_val_bulk",
-            placeholder="1\n2\n3\nou : 1, 2, 3",
-            height=96,
+    else:
+        st.text_area(
+            "Valeur(s)",
+            key="new_val",
+            placeholder="Une valeur, ou plusieurs séparées par des virgules / sauts de ligne",
+            height=80,
             label_visibility="collapsed",
         )
-    else:
-        new_val_text = st.text_input("Valeur", key="new_val",
-                                     placeholder="Valeur…", label_visibility="collapsed")
 with fd:
     new_join = (st.radio("Lier", ["ET","OU"], horizontal=False, key="new_join",
                          label_visibility="collapsed")
@@ -654,17 +651,33 @@ with btn_a:
     if st.button("➕ Ajouter la condition", use_container_width=True):
         if is_date:
             st.session_state.conditions.append({
-                "column": new_col, "operator": "Commence par",
-                "value":  build_date_value(int(new_year), int(new_month), int(new_day)),
-                "join_op": new_join, "is_date": True, "is_bulk": False})
+                "column":   new_col,
+                "operator": "Commence par",
+                "value":    build_date_value(int(new_year), int(new_month), int(new_day)),
+                "join_op":  new_join,
+                "is_date":  True,
+            })
             st.rerun()
-        elif is_bulk:
-            raw    = st.session_state.get("new_val_bulk", "")
+        else:
+            raw    = st.session_state.get("new_val", "")
             values = [v.strip() for v in re.split(r"[,\n]", raw) if v.strip()]
-            if values:
+            if not values:
+                st.warning("Veuillez entrer au moins une valeur.")
+            elif len(values) == 1:
                 st.session_state.conditions.append({
                     "column":   new_col,
-                    "operator": "Dans la liste",
+                    "operator": new_op,
+                    "value":    values[0],
+                    "join_op":  new_join,
+                    "is_date":  False,
+                    "is_bulk":  False,
+                })
+                st.rerun()
+            else:
+                # Plusieurs valeurs → une seule feuille bulk
+                st.session_state.conditions.append({
+                    "column":   new_col,
+                    "operator": new_op,
                     "value":    ", ".join(values),
                     "values":   values,
                     "join_op":  new_join,
@@ -672,16 +685,6 @@ with btn_a:
                     "is_bulk":  True,
                 })
                 st.rerun()
-            else:
-                st.warning("Entrez au moins une valeur.")
-        elif new_val_text.strip():
-            st.session_state.conditions.append({
-                "column":  new_col, "operator": new_op,
-                "value":   new_val_text.strip(), "join_op": new_join,
-                "is_date": False, "is_bulk": False})
-            st.rerun()
-        else:
-            st.warning("Veuillez entrer une valeur.")
 with btn_b:
     if st.button("🗑 Effacer", use_container_width=True):
         st.session_state.conditions   = []
