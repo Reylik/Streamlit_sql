@@ -727,7 +727,6 @@ if st.session_state.results is not None:
 
     st.markdown("---")
     st.markdown("### 📊 Résultats")
-    st.caption("💡 Cliquez sur une cellule pour explorer sa valeur.")
 
     m1, m2, m3 = st.columns(3)
     m1.metric("Lignes", len(df))
@@ -737,62 +736,471 @@ if st.session_state.results is not None:
     if len(df) == 0:
         st.info("Aucun résultat ne correspond à vos critères.")
     else:
-        event = st.dataframe(df, use_container_width=True, hide_index=True,
-                             on_select="rerun", selection_mode="single-cell")
-        sel  = event.selection if hasattr(event, "selection") else {}
-        rows, cols = sel.get("rows",[]), sel.get("columns",[])
-        if rows and cols:
-            cell_filter_dialog(df.columns[cols[0]], df.iloc[rows[0], cols[0]])
+        # ── column presence flags ──────────────────────────────────────────────
+        has_nom        = "nom"         in df.columns
+        has_prenom     = "prenom"      in df.columns
+        has_dest       = "destination" in df.columns
+        has_depart     = "date_depart" in df.columns
+        has_budget     = "budget"      in df.columns
+        has_note       = "note"        in df.columns
+        has_continent  = "continent"   in df.columns
+        has_type       = "type_voyage" in df.columns
+        has_duree      = "duree_jours" in df.columns
+        has_statut_v   = "statut_voyage" in df.columns
+        has_client_nom = "client_nom"  in df.columns
+        has_ville      = "ville"       in df.columns
+        has_client_id  = "client_id"   in df.columns
 
-        st.download_button("⬇ Télécharger CSV",
-            df.to_csv(index=False).encode("utf-8"),
-            f"resultats_{current_table}.csv", "text/csv")
+        # ── continent color palette ────────────────────────────────────────────
+        CONT_COLORS = {
+            "Asie":"#f59e0b","Europe":"#3b82f6","Amérique":"#10b981",
+            "Afrique":"#ef4444","Océanie":"#8b5cf6",
+        }
+        TYPE_COLORS = {
+            "Tourisme":"#3b82f6","Affaires":"#8b5cf6","Détente":"#10b981",
+            "Lune de miel":"#f472b6","Safari":"#f59e0b","Aventure":"#ef4444",
+            "Luxe":"#fbbf24","City Break":"#06b6d4","Culturel":"#a78bfa",
+            "Plage":"#22d3ee","Romantique":"#fb7185",
+        }
 
-    # ── Enrichment ─────────────────────────────────────────────────────────────
+        tab1, tab2, tab3, tab4 = st.tabs(
+            ["📋 Grille", "👤 Fiches", "🗓 Timeline", "📈 Statistiques"]
+        )
+
+        # ══════════════════════════════════════════════════════════════════════
+        # TAB 1 — Grille
+        # ══════════════════════════════════════════════════════════════════════
+        with tab1:
+            st.caption("💡 Cliquez sur une cellule pour explorer sa valeur.")
+            event = st.dataframe(df, use_container_width=True, hide_index=True,
+                                 on_select="rerun", selection_mode="single-cell")
+            sel  = event.selection if hasattr(event, "selection") else {}
+            rows_s, cols_s = sel.get("rows",[]), sel.get("columns",[])
+            if rows_s and cols_s:
+                cell_filter_dialog(df.columns[cols_s[0]], df.iloc[rows_s[0], cols_s[0]])
+            st.download_button("⬇ Télécharger CSV",
+                df.to_csv(index=False).encode("utf-8"),
+                f"resultats_{current_table}.csv", "text/csv")
+
+        # ══════════════════════════════════════════════════════════════════════
+        # TAB 2 — Fiches
+        # ══════════════════════════════════════════════════════════════════════
+        with tab2:
+            # ── Case A : données enrichies (clients + voyages) ─────────────
+            if has_nom and has_prenom and has_dest:
+                key_id = "id"
+                client_groups = df.groupby(key_id, sort=False)
+                for client_id, group in client_groups:
+                    row0 = group.iloc[0]
+                    initials = (str(row0.get("prenom","?"))[:1] +
+                                str(row0.get("nom","?"))[:1]).upper()
+                    ville_txt   = row0.get("ville","")
+                    statut_txt  = row0.get("statut","")
+                    stat_color  = "#4ade80" if statut_txt == "actif" else "#f87171"
+                    n_voyages   = len(group)
+                    budget_tot  = group["budget"].sum() if has_budget else 0
+
+                    card_html = (
+                        f"<div style='background:#13151d;border:1px solid #1e2130;"
+                        f"border-radius:12px;padding:16px 20px;margin-bottom:16px;'>"
+                        f"<div style='display:flex;align-items:center;gap:14px;margin-bottom:12px;'>"
+                        f"<div style='width:44px;height:44px;border-radius:50%;"
+                        f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
+                        f"display:flex;align-items:center;justify-content:center;"
+                        f"font-weight:700;font-size:1rem;color:white;flex-shrink:0;'>{initials}</div>"
+                        f"<div>"
+                        f"<div style='font-weight:700;font-size:1rem;color:#e8eaf0;'>"
+                        f"{row0.get('prenom','')} {row0.get('nom','')}</div>"
+                        f"<div style='color:#64748b;font-size:.82rem;'>"
+                        f"{ville_txt} &nbsp;·&nbsp; "
+                        f"<span style='color:{stat_color};'>{statut_txt}</span></div>"
+                        f"</div>"
+                        f"<div style='margin-left:auto;text-align:right;'>"
+                        f"<div style='color:#a78bfa;font-size:1.1rem;font-weight:700;"
+                        f"font-family:JetBrains Mono,monospace;'>{n_voyages}</div>"
+                        f"<div style='color:#64748b;font-size:.72rem;'>voyage{'s' if n_voyages>1 else ''}</div>"
+                        f"</div></div>"
+                    )
+                    # voyage rows
+                    for _, vrow in group.iterrows():
+                        dest     = vrow.get("destination","")
+                        cont     = vrow.get("continent","")
+                        cont_col = CONT_COLORS.get(cont,"#6b7280")
+                        dep      = str(vrow.get("date_depart",""))[:10]
+                        ret      = str(vrow.get("date_retour",""))[:10]
+                        bgt      = vrow.get("budget",0)
+                        note_v   = vrow.get("note",None)
+                        stars    = ("⭐" * int(note_v)) if note_v and not pd.isna(note_v) else "—"
+                        tv       = vrow.get("type_voyage","")
+                        tv_col   = TYPE_COLORS.get(tv,"#6b7280")
+                        card_html += (
+                            f"<div style='display:flex;align-items:center;gap:10px;"
+                            f"padding:7px 0;border-top:1px solid #1e2130;'>"
+                            f"<div style='width:3px;height:32px;border-radius:2px;"
+                            f"background:{cont_col};flex-shrink:0;'></div>"
+                            f"<div style='flex:1;'>"
+                            f"<span style='color:#e8eaf0;font-weight:600;font-size:.85rem;'>{dest}</span>"
+                            f"<span style='color:#475569;font-size:.75rem;margin-left:8px;'>{dep} → {ret}</span>"
+                            f"</div>"
+                            f"<span style='background:{tv_col}22;color:{tv_col};"
+                            f"font-size:.7rem;padding:2px 8px;border-radius:10px;'>{tv}</span>"
+                            f"<span style='color:#fbbf24;font-size:.78rem;font-family:JetBrains Mono,monospace;"
+                            f"margin-left:4px;'>{int(bgt):,}€</span>"
+                            f"<span style='font-size:.75rem;margin-left:6px;'>{stars}</span>"
+                            f"</div>"
+                        )
+                    card_html += "</div>"
+                    st.markdown(card_html, unsafe_allow_html=True)
+
+            # ── Case B : clients seuls ─────────────────────────────────────
+            elif has_nom and has_prenom and not has_dest:
+                cols_grid = st.columns(2)
+                for i, (_, row) in enumerate(df.iterrows()):
+                    initials   = (str(row.get("prenom","?"))[:1] +
+                                  str(row.get("nom","?"))[:1]).upper()
+                    statut_txt = str(row.get("statut",""))
+                    stat_color = "#4ade80" if statut_txt == "actif" else "#f87171"
+                    date_ins   = str(row.get("date_inscription",""))[:10]
+                    ville_txt  = row.get("ville","")
+                    card_html  = (
+                        f"<div style='background:#13151d;border:1px solid #1e2130;"
+                        f"border-radius:12px;padding:16px 18px;margin-bottom:12px;'>"
+                        f"<div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;'>"
+                        f"<div style='width:40px;height:40px;border-radius:50%;"
+                        f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
+                        f"display:flex;align-items:center;justify-content:center;"
+                        f"font-weight:700;color:white;'>{initials}</div>"
+                        f"<div><div style='font-weight:700;color:#e8eaf0;'>"
+                        f"{row.get('prenom','')} {row.get('nom','')}</div>"
+                        f"<div style='font-size:.78rem;color:#64748b;'>{ville_txt} · "
+                        f"<span style='color:{stat_color};'>{statut_txt}</span></div></div>"
+                        f"</div>"
+                        f"<div style='font-size:.78rem;color:#64748b;line-height:1.8;'>"
+                        f"📧 {row.get('email','')}<br>"
+                        f"📞 {row.get('telephone','')}<br>"
+                        f"📅 Membre depuis {date_ins}"
+                        f"</div></div>"
+                    )
+                    cols_grid[i % 2].markdown(card_html, unsafe_allow_html=True)
+
+            # ── Case C : voyages seuls (ou voyages enrichis avec client_nom) ─
+            elif has_dest:
+                cols_grid = st.columns(2)
+                for i, (_, row) in enumerate(df.iterrows()):
+                    dest     = row.get("destination","")
+                    pays     = row.get("pays_destination","")
+                    cont     = row.get("continent","")
+                    cont_col = CONT_COLORS.get(cont,"#6b7280")
+                    dep      = str(row.get("date_depart",""))[:10]
+                    ret      = str(row.get("date_retour",""))[:10]
+                    duree    = row.get("duree_jours","")
+                    bgt      = row.get("budget",0)
+                    hotel    = row.get("hotel","")
+                    tv       = row.get("type_voyage","")
+                    tv_col   = TYPE_COLORS.get(tv,"#6b7280")
+                    note_v   = row.get("note",None)
+                    stars    = ("⭐" * int(note_v)) if note_v and not pd.isna(note_v) else "—"
+                    stat_v   = row.get("statut","")
+                    # client name if enriched
+                    cnom     = ""
+                    if has_client_nom:
+                        cnom = f"{row.get('client_prenom','')} {row.get('client_nom','')}"
+                    elif has_client_id:
+                        cnom = f"Client #{int(row.get('client_id',0))}"
+
+                    card_html = (
+                        f"<div style='background:#13151d;border:1px solid #1e2130;"
+                        f"border-top:3px solid {cont_col};"
+                        f"border-radius:12px;padding:16px 18px;margin-bottom:12px;'>"
+                        f"<div style='display:flex;justify-content:space-between;align-items:start;'>"
+                        f"<div>"
+                        f"<div style='font-weight:700;font-size:1rem;color:#e8eaf0;'>{dest}</div>"
+                        f"<div style='font-size:.78rem;color:#64748b;'>{pays} · "
+                        f"<span style='color:{cont_col};'>{cont}</span></div>"
+                        f"</div>"
+                        f"<span style='background:{tv_col}22;color:{tv_col};"
+                        f"font-size:.7rem;padding:3px 10px;border-radius:10px;white-space:nowrap;'>{tv}</span>"
+                        f"</div>"
+                        f"<div style='margin:10px 0;font-size:.8rem;color:#94a3b8;'>"
+                        f"📅 {dep} → {ret}"
+                        f"{'&nbsp;&nbsp;·&nbsp;&nbsp;🕒 ' + str(duree) + 'j' if duree else ''}"
+                        f"{'&nbsp;&nbsp;·&nbsp;&nbsp;' + cnom if cnom else ''}"
+                        f"</div>"
+                        f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+                        f"<span style='color:#64748b;font-size:.78rem;'>🏨 {hotel}</span>"
+                        f"<div style='text-align:right;'>"
+                        f"<div style='color:#4ade80;font-weight:700;font-family:JetBrains Mono,monospace;'>"
+                        f"{int(bgt):,}€</div>"
+                        f"<div style='font-size:.75rem;'>{stars}</div>"
+                        f"</div></div>"
+                        f"</div>"
+                    )
+                    cols_grid[i % 2].markdown(card_html, unsafe_allow_html=True)
+            else:
+                st.info("Aucune vue fiche disponible pour ces colonnes.")
+
+        # ══════════════════════════════════════════════════════════════════════
+        # TAB 3 — Timeline
+        # ══════════════════════════════════════════════════════════════════════
+        with tab3:
+            if not has_depart:
+                st.info("La timeline nécessite une colonne `date_depart`.")
+            else:
+                df_tl = df.copy()
+                df_tl["date_depart"] = pd.to_datetime(df_tl["date_depart"], errors="coerce")
+                if "date_retour" in df_tl.columns:
+                    df_tl["date_retour"] = pd.to_datetime(df_tl["date_retour"], errors="coerce")
+                df_tl = df_tl.dropna(subset=["date_depart"]).sort_values("date_depart")
+
+                if df_tl.empty:
+                    st.info("Aucune date valide trouvée.")
+                else:
+                    d_min = df_tl["date_depart"].min()
+                    d_max = (df_tl["date_retour"].max()
+                             if "date_retour" in df_tl.columns
+                             else df_tl["date_depart"].max())
+                    span  = max((d_max - d_min).days, 1)
+
+                    # group by year-month for section headers
+                    current_ym = None
+                    for _, row in df_tl.iterrows():
+                        ym = row["date_depart"].strftime("%B %Y").capitalize()
+                        if ym != current_ym:
+                            current_ym = ym
+                            st.markdown(
+                                f"<div style='color:#6366f1;font-size:.75rem;font-weight:700;"
+                                f"text-transform:uppercase;letter-spacing:1px;"
+                                f"font-family:JetBrains Mono,monospace;"
+                                f"margin:18px 0 6px;'>{ym}</div>",
+                                unsafe_allow_html=True)
+
+                        dep      = row["date_depart"]
+                        ret      = row.get("date_retour") if has_depart and "date_retour" in df_tl.columns else dep
+                        if pd.isna(ret): ret = dep
+                        duree    = max((ret - dep).days, 1)
+                        left_pct = round((dep - d_min).days / span * 100, 1)
+                        width_pct= max(round(duree / span * 100, 1), 1.5)
+
+                        dest     = row.get("destination","")
+                        cont     = row.get("continent","")
+                        cont_col = CONT_COLORS.get(cont,"#6b7280")
+                        tv       = row.get("type_voyage","")
+                        tv_col   = TYPE_COLORS.get(tv,"#6b7280")
+                        bgt      = row.get("budget","")
+                        note_v   = row.get("note",None)
+                        stars    = "⭐" * int(note_v) if note_v and not pd.isna(note_v) else ""
+                        cnom     = ""
+                        if has_client_nom:
+                            cnom = f"{row.get('client_prenom','')} {row.get('client_nom','')}".strip()
+                        elif has_prenom and has_nom:
+                            cnom = f"{row.get('prenom','')} {row.get('nom','')}".strip()
+
+                        dep_str = dep.strftime("%d %b %Y")
+                        ret_str = ret.strftime("%d %b %Y")
+
+                        st.markdown(
+                            f"<div style='background:#13151d;border:1px solid #1e2130;"
+                            f"border-radius:10px;padding:12px 16px;margin-bottom:8px;'>"
+                            # label row
+                            f"<div style='display:flex;align-items:center;gap:8px;margin-bottom:8px;'>"
+                            f"<span style='width:8px;height:8px;border-radius:50%;"
+                            f"background:{cont_col};display:inline-block;flex-shrink:0;'></span>"
+                            f"<span style='font-weight:600;color:#e8eaf0;font-size:.9rem;'>{dest}</span>"
+                            f"{'<span style=\"color:#94a3b8;font-size:.78rem;\"> · ' + cnom + '</span>' if cnom else ''}"
+                            f"<span style='margin-left:auto;color:#64748b;font-size:.75rem;'>"
+                            f"{dep_str} → {ret_str} · {duree}j</span>"
+                            f"</div>"
+                            # bar
+                            f"<div style='position:relative;height:10px;background:#1e293b;"
+                            f"border-radius:5px;overflow:hidden;'>"
+                            f"<div style='position:absolute;left:{left_pct}%;width:{width_pct}%;"
+                            f"height:100%;background:linear-gradient(90deg,{cont_col},{tv_col});"
+                            f"border-radius:5px;'></div></div>"
+                            # chips
+                            f"<div style='margin-top:7px;display:flex;gap:6px;flex-wrap:wrap;'>"
+                            f"<span style='background:{tv_col}22;color:{tv_col};font-size:.7rem;"
+                            f"padding:2px 8px;border-radius:10px;'>{tv}</span>"
+                            f"{'<span style=\"font-size:.75rem;color:#4ade80;font-family:JetBrains Mono,monospace;\">' + str(int(bgt)) + '€</span>' if bgt else ''}"
+                            f"<span style='font-size:.72rem;'>{stars}</span>"
+                            f"</div></div>",
+                            unsafe_allow_html=True)
+
+        # ══════════════════════════════════════════════════════════════════════
+        # TAB 4 — Statistiques
+        # ══════════════════════════════════════════════════════════════════════
+        with tab4:
+            def _hbar(label, value, total, color, fmt=None):
+                pct   = round(value / total * 100) if total else 0
+                v_str = fmt(value) if fmt else str(value)
+                return (
+                    f"<div style='margin-bottom:10px;'>"
+                    f"<div style='display:flex;justify-content:space-between;"
+                    f"font-size:.8rem;margin-bottom:3px;'>"
+                    f"<span style='color:#c8cad6;'>{label}</span>"
+                    f"<span style='color:#94a3b8;font-family:JetBrains Mono,monospace;'>{v_str}</span>"
+                    f"</div>"
+                    f"<div style='background:#1e293b;border-radius:4px;height:8px;'>"
+                    f"<div style='width:{pct}%;height:100%;border-radius:4px;"
+                    f"background:{color};transition:width .3s;'></div></div></div>"
+                )
+
+            if has_dest:  # voyage stats
+                sa, sb = st.columns(2)
+                with sa:
+                    # Key metrics
+                    n_total = len(df)
+                    if has_budget:
+                        bgt_total = df["budget"].sum()
+                        bgt_moy   = df["budget"].mean()
+                        st.markdown(
+                            f"<div style='background:#13151d;border:1px solid #1e2130;"
+                            f"border-radius:10px;padding:14px 18px;margin-bottom:12px;'>"
+                            f"<div style='color:#94a3b8;font-size:.72rem;text-transform:uppercase;"
+                            f"letter-spacing:1px;margin-bottom:6px;'>Budget total</div>"
+                            f"<div style='color:#4ade80;font-size:1.6rem;font-weight:800;"
+                            f"font-family:JetBrains Mono,monospace;'>{int(bgt_total):,}€</div>"
+                            f"<div style='color:#64748b;font-size:.8rem;'>moy. {int(bgt_moy):,}€ / voyage</div>"
+                            f"</div>",
+                            unsafe_allow_html=True)
+                    if has_duree:
+                        d_moy = df["duree_jours"].mean()
+                        d_max = df["duree_jours"].max()
+                        st.markdown(
+                            f"<div style='background:#13151d;border:1px solid #1e2130;"
+                            f"border-radius:10px;padding:14px 18px;margin-bottom:12px;'>"
+                            f"<div style='color:#94a3b8;font-size:.72rem;text-transform:uppercase;"
+                            f"letter-spacing:1px;margin-bottom:6px;'>Durée moyenne</div>"
+                            f"<div style='color:#60a5fa;font-size:1.6rem;font-weight:800;"
+                            f"font-family:JetBrains Mono,monospace;'>{d_moy:.1f}j</div>"
+                            f"<div style='color:#64748b;font-size:.8rem;'>max {int(d_max)}j</div>"
+                            f"</div>",
+                            unsafe_allow_html=True)
+                    if has_note:
+                        notes = df["note"].dropna()
+                        if len(notes):
+                            note_moy = notes.mean()
+                            st.markdown(
+                                f"<div style='background:#13151d;border:1px solid #1e2130;"
+                                f"border-radius:10px;padding:14px 18px;margin-bottom:12px;'>"
+                                f"<div style='color:#94a3b8;font-size:.72rem;text-transform:uppercase;"
+                                f"letter-spacing:1px;margin-bottom:6px;'>Note moyenne</div>"
+                                f"<div style='color:#fbbf24;font-size:1.6rem;font-weight:800;'>"
+                                f"{'⭐' * round(note_moy)} <span style='font-size:.9rem;"
+                                f"font-family:JetBrains Mono,monospace;'>{note_moy:.1f}/5</span></div>"
+                                f"<div style='color:#64748b;font-size:.8rem;'>{len(notes)} avis</div>"
+                                f"</div>",
+                                unsafe_allow_html=True)
+                with sb:
+                    if has_continent:
+                        st.markdown("<div style='color:#94a3b8;font-size:.75rem;text-transform:uppercase;"
+                                    "letter-spacing:1px;margin-bottom:8px;'>Par continent</div>",
+                                    unsafe_allow_html=True)
+                        cont_counts = df["continent"].value_counts()
+                        bars = ""
+                        for cont, cnt_c in cont_counts.items():
+                            bars += _hbar(cont, cnt_c, n_total, CONT_COLORS.get(cont,"#6b7280"))
+                        st.markdown(f"<div style='background:#13151d;border:1px solid #1e2130;"
+                                    f"border-radius:10px;padding:14px 18px;margin-bottom:12px;'>{bars}</div>",
+                                    unsafe_allow_html=True)
+                    if has_type:
+                        st.markdown("<div style='color:#94a3b8;font-size:.75rem;text-transform:uppercase;"
+                                    "letter-spacing:1px;margin-bottom:8px;'>Par type</div>",
+                                    unsafe_allow_html=True)
+                        type_counts = df["type_voyage"].value_counts()
+                        bars = ""
+                        for tv, cnt_t in type_counts.items():
+                            bars += _hbar(tv, cnt_t, n_total, TYPE_COLORS.get(tv,"#6b7280"))
+                        st.markdown(f"<div style='background:#13151d;border:1px solid #1e2130;"
+                                    f"border-radius:10px;padding:14px 18px;'>{bars}</div>",
+                                    unsafe_allow_html=True)
+
+                # Top destinations
+                if has_budget:
+                    st.markdown("<div style='color:#94a3b8;font-size:.75rem;text-transform:uppercase;"
+                                "letter-spacing:1px;margin:14px 0 8px;'>Top destinations — budget</div>",
+                                unsafe_allow_html=True)
+                    top_dest = (df.groupby("destination")["budget"]
+                                .sum().sort_values(ascending=False).head(8))
+                    max_b    = top_dest.max()
+                    bars     = ""
+                    for dest, b in top_dest.items():
+                        cont_dest = df[df["destination"]==dest]["continent"].iloc[0] if has_continent else ""
+                        col_dest  = CONT_COLORS.get(cont_dest,"#6b7280")
+                        bars     += _hbar(dest, int(b), int(max_b), col_dest,
+                                          fmt=lambda x: f"{x:,}€")
+                    st.markdown(f"<div style='background:#13151d;border:1px solid #1e2130;"
+                                f"border-radius:10px;padding:14px 18px;'>{bars}</div>",
+                                unsafe_allow_html=True)
+
+            elif has_nom:  # client stats
+                sa, sb = st.columns(2)
+                with sa:
+                    n_total = len(df)
+                    if "statut" in df.columns:
+                        n_actif = (df["statut"] == "actif").sum()
+                        st.markdown(
+                            f"<div style='background:#13151d;border:1px solid #1e2130;"
+                            f"border-radius:10px;padding:14px 18px;margin-bottom:12px;'>"
+                            f"<div style='color:#94a3b8;font-size:.72rem;text-transform:uppercase;"
+                            f"letter-spacing:1px;margin-bottom:6px;'>Statut</div>"
+                            f"<div style='display:flex;gap:14px;'>"
+                            f"<div><div style='color:#4ade80;font-size:1.4rem;font-weight:800;"
+                            f"font-family:JetBrains Mono,monospace;'>{n_actif}</div>"
+                            f"<div style='color:#64748b;font-size:.78rem;'>actifs</div></div>"
+                            f"<div><div style='color:#f87171;font-size:1.4rem;font-weight:800;"
+                            f"font-family:JetBrains Mono,monospace;'>{n_total-n_actif}</div>"
+                            f"<div style='color:#64748b;font-size:.78rem;'>inactifs</div></div>"
+                            f"</div></div>",
+                            unsafe_allow_html=True)
+                with sb:
+                    if has_ville:
+                        st.markdown("<div style='color:#94a3b8;font-size:.75rem;text-transform:uppercase;"
+                                    "letter-spacing:1px;margin-bottom:8px;'>Par ville</div>",
+                                    unsafe_allow_html=True)
+                        ville_counts = df["ville"].value_counts().head(8)
+                        bars = ""
+                        for ville, cnt_v in ville_counts.items():
+                            bars += _hbar(ville, cnt_v, n_total, "#6366f1")
+                        st.markdown(f"<div style='background:#13151d;border:1px solid #1e2130;"
+                                    f"border-radius:10px;padding:14px 18px;'>{bars}</div>",
+                                    unsafe_allow_html=True)
+            else:
+                st.info("Statistiques non disponibles pour cette combinaison de colonnes.")
+
+    # ── Enrichment button ───────────────────────────────────────────────────────
     st.markdown("---")
-
     if cnt is None:
         st.info(f"Calcul du lien avec **{other_table}** en cours…")
-
     elif cnt == "done":
-        pass  # enrichissement déjà effectué, rien à afficher
-
+        pass
     elif cnt == 0:
         st.markdown(
             f"<div style='background:#1a1d27;border:1px solid #2a2d3e;border-radius:10px;"
             f"padding:14px 18px;color:#6b7280;font-size:.9rem;'>"
             f"ℹ️ Aucune information supplémentaire dans la table "
-            f"<b style='color:#94a3b8;'>{other_table}</b> "
-            f"pour ces résultats.</div>",
+            f"<b style='color:#94a3b8;'>{other_table}</b> pour ces résultats.</div>",
             unsafe_allow_html=True)
     else:
-        # Enrich button — green, shows count
         enrich_marker = "enrich-btn-marker"
         st.markdown(
-            f'<div id="{enrich_marker}"></div>'
-            f"<style>"
+            f'<div id="{enrich_marker}"></div><style>'
             f"div.element-container:has(#{enrich_marker}) + div.element-container button{{"
             f"background:linear-gradient(135deg,#065f46,#047857)!important;"
-            f"border:1px solid #059669!important;"
-            f"box-shadow:0 0 14px #05966966!important;"
+            f"border:1px solid #059669!important;box-shadow:0 0 14px #05966966!important;"
             f"font-size:.92rem!important;padding:10px 0!important;}}"
             f"div.element-container:has(#{enrich_marker}) + div.element-container button:hover{{"
-            f"filter:brightness(1.15)!important;transform:translateY(-1px)!important;}}"
-            f"</style>",
+            f"filter:brightness(1.15)!important;transform:translateY(-1px)!important;}}</style>",
             unsafe_allow_html=True)
         if st.button(
-            f"🔗 Enrichir avec {other_table} — {cnt} ligne{'s' if cnt > 1 else ''} disponible{'s' if cnt > 1 else ''}",
-            use_container_width=True,
-            key="enrich_btn",
-        ):
+            f"🔗 Enrichir avec {other_table} — {cnt} ligne{'s' if cnt>1 else ''} disponible{'s' if cnt>1 else ''}",
+            use_container_width=True, key="enrich_btn"):
             try:
-                enriched = run_enrich_query(
-                    current_table,
-                    st.session_state.last_where,
-                    st.session_state.last_params,
-                )
+                enriched = run_enrich_query(current_table,
+                                            st.session_state.last_where,
+                                            st.session_state.last_params)
                 st.session_state.results      = enriched
-                st.session_state.enrich_count = "done"   # enrichissement terminé
+                st.session_state.enrich_count = "done"
                 st.rerun()
             except Exception as e:
                 st.error(f"Erreur enrichissement : {e}")
+
