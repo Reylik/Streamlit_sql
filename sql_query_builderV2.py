@@ -9,7 +9,7 @@ st.set_page_config(page_title="SQL Query Builder", page_icon="🔍",
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;600;700;800&display=swap');
-html,body,[class*="css"]{font-family:'Syne',sans-serif;}
+html,body,[class*="css"]{font-family:'Syne',system-ui,-apple-system,sans-serif;}
 .stApp{background:#0d0f14;color:#e8eaf0;}
 h1{font-family:'Syne',sans-serif!important;font-weight:800!important;font-size:2.2rem!important;
    background:linear-gradient(135deg,#64b5f6,#a78bfa,#f472b6);
@@ -773,11 +773,26 @@ if st.session_state.results is not None:
         with tab1:
             st.caption("💡 Cliquez sur une cellule pour explorer sa valeur.")
             event = st.dataframe(df, use_container_width=True, hide_index=True,
-                                 on_select="rerun", selection_mode="single-cell")
-            sel  = event.selection if hasattr(event, "selection") else {}
-            rows_s, cols_s = sel.get("rows",[]), sel.get("columns",[])
+                                 on_select="rerun", selection_mode="single-cell",
+                                 key="result_df")
+            sel    = event.selection if hasattr(event, "selection") else {}
+            rows_s = sel.get("rows", [])
+            cols_s = sel.get("columns", [])
             if rows_s and cols_s:
-                cell_filter_dialog(df.columns[cols_s[0]], df.iloc[rows_s[0], cols_s[0]])
+                # cols_s[0] est un NOM de colonne (string) dans Streamlit ≥ 1.35,
+                # pas un indice entier — correction du bug principal
+                col_ref  = cols_s[0]
+                col_name = col_ref if isinstance(col_ref, str) else df.columns[int(col_ref)]
+                row_idx  = int(rows_s[0])
+                try:
+                    cell_val = df.iloc[row_idx][col_name]
+                except KeyError:
+                    cell_val = df.iloc[row_idx, df.columns.get_loc(col_name)]
+                # Signature unique pour éviter de rouvrir le dialog sur chaque rerun
+                click_sig = f"{row_idx}__{col_name}__{cell_val}"
+                if click_sig != st.session_state.get("_last_cell_click"):
+                    st.session_state["_last_cell_click"]      = click_sig
+                    st.session_state["_cell_dialog_pending"]  = (col_name, cell_val)
             st.download_button("⬇ Télécharger CSV",
                 df.to_csv(index=False).encode("utf-8"),
                 f"resultats_{current_table}.csv", "text/csv")
@@ -1166,6 +1181,11 @@ if st.session_state.results is not None:
                                     unsafe_allow_html=True)
             else:
                 st.info("Statistiques non disponibles pour cette combinaison de colonnes.")
+
+    # ── Dialog cellule — appelé HORS du contexte tabs pour fiabilité ──────────
+    if st.session_state.get("_cell_dialog_pending"):
+        col_n, val_n = st.session_state.pop("_cell_dialog_pending")
+        cell_filter_dialog(col_n, val_n)
 
     # ── Enrichment button ───────────────────────────────────────────────────────
     st.markdown("---")
