@@ -358,7 +358,7 @@ def _render_leaf_editor(conditions, idx):
                                        index=OP_LABELS.index(cond["operator"]),
                                        key=f"eop_{idx}", label_visibility="collapsed")
         with e2:
-            if st.button("✓", key=f"eok_{idx}", help="Valider", use_container_width=True):
+            if st.button("✓", key=f"eok_{idx}", help="Valider", width="stretch"):
                 raw    = st.session_state.get(f"ev_{idx}", current_text)
                 values = [v.strip() for v in re.split(r"[,\n]", raw) if v.strip()]
                 if values:
@@ -370,7 +370,7 @@ def _render_leaf_editor(conditions, idx):
                 else:
                     st.warning("Entrez au moins une valeur.")
         with e3:
-            if st.button("🗑", key=f"edel_{idx}", help="Supprimer", use_container_width=True):
+            if st.button("🗑", key=f"edel_{idx}", help="Supprimer", width="stretch"):
                 st.session_state.conditions.pop(idx)
                 st.session_state.editing.pop(idx, None)
                 st.rerun()
@@ -539,7 +539,7 @@ def cell_filter_dialog(col_name, cell_value):
         f" <span style='color:#fbbf24'>{sym}</span>"
         f" <span style='color:#86efac'>'{tv}'</span></div>",
         unsafe_allow_html=True)
-    if st.button("▶ Lancer la requête", use_container_width=True, type="primary", key="dlg_run"):
+    if st.button("▶ Lancer la requête", width="stretch", type="primary", key="dlg_run"):
         conn = get_connection()
         q = f"SELECT * FROM {target_table} WHERE {col_name} {sym} ?"
         try:
@@ -565,7 +565,7 @@ def cell_filter_dialog(col_name, cell_value):
             f"<span style='color:#86efac;font-size:.85rem;'> ligne(s)</span></div>",
             unsafe_allow_html=True)
     else:
-        if st.button("🔢 Estimer le nombre de résultats (COUNT)", use_container_width=True, key="dlg_count"):
+        if st.button("🔢 Estimer le nombre de résultats (COUNT)", width="stretch", key="dlg_count"):
             conn = get_connection(); q2 = f"SELECT COUNT(*) AS total FROM {target_table} WHERE {col_name} {sym} ?"
             try:
                 r2 = pd.read_sql_query(q2, conn, params=[tv])
@@ -576,7 +576,7 @@ def cell_filter_dialog(col_name, cell_value):
     st.markdown("<span style='color:#94a3b8;font-size:.8rem;'>Ou ajouter comme condition dans l'arbre :</span>",
                 unsafe_allow_html=True)
     join = st.radio("Lier avec", ["ET","OU"], horizontal=True, key="dlg_join") if st.session_state.conditions else "ET"
-    if st.button("➕ Ajouter à l'arbre", use_container_width=True, key="dlg_add"):
+    if st.button("➕ Ajouter à l'arbre", width="stretch", key="dlg_add"):
         st.session_state.conditions.append({"column":col_name,"operator":op,"value":str_value,"join_op":join})
         st.rerun()
 
@@ -604,7 +604,7 @@ for i, tname in enumerate(TABLES):
         f"border:{'none' if is_active else '1px solid #2a2d3e'}!important;"
         f"border-radius:20px!important;width:100%;font-size:.85rem!important;}}</style>",
         unsafe_allow_html=True)
-    if t_cols[i].button(tname, key=f"tpill_{tname}", use_container_width=True):
+    if t_cols[i].button(tname, key=f"tpill_{tname}", width="stretch"):
         st.session_state.selected_table = tname
         st.session_state.conditions     = []
         st.session_state.results        = None
@@ -648,7 +648,7 @@ with fd:
 
 btn_a, btn_b = st.columns([3, 1])
 with btn_a:
-    if st.button("➕ Ajouter la condition", use_container_width=True):
+    if st.button("➕ Ajouter la condition", width="stretch"):
         if is_date:
             st.session_state.conditions.append({
                 "column":   new_col,
@@ -686,7 +686,7 @@ with btn_a:
                 })
                 st.rerun()
 with btn_b:
-    if st.button("🗑 Effacer", use_container_width=True):
+    if st.button("🗑 Effacer", width="stretch"):
         st.session_state.conditions   = []
         st.session_state.results      = None
         st.session_state.enrich_count = None
@@ -705,7 +705,7 @@ with col_sql:
         st.markdown(f"<div class='sql-display'>{build_query_display(current_table, st.session_state.conditions)}</div>",
                     unsafe_allow_html=True)
     st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
-    if st.button("▶ Exécuter la requête", use_container_width=True, type="primary"):
+    if st.button("▶ Exécuter la requête", width="stretch", type="primary"):
         conn = get_connection()
         q, params = build_query(current_table, st.session_state.conditions)
         try:
@@ -772,7 +772,7 @@ if st.session_state.results is not None:
         # ══════════════════════════════════════════════════════════════════════
         with tab1:
             st.caption("💡 Cliquez sur une cellule pour explorer sa valeur.")
-            event = st.dataframe(df, use_container_width=True, hide_index=True,
+            event = st.dataframe(df, width="stretch", hide_index=True,
                                  on_select="rerun", selection_mode="single-cell",
                                  key="result_df")
             sel    = event.selection if hasattr(event, "selection") else {}
@@ -1213,7 +1213,7 @@ if st.session_state.results is not None:
             unsafe_allow_html=True)
         if st.button(
             f"🔗 Enrichir avec {other_table} — {cnt} ligne{'s' if cnt>1 else ''} disponible{'s' if cnt>1 else ''}",
-            use_container_width=True, key="enrich_btn"):
+            width="stretch", key="enrich_btn"):
             try:
                 enriched = run_enrich_query(current_table,
                                             st.session_state.last_where,
