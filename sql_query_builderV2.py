@@ -196,7 +196,7 @@ def build_date_value(year: int, month: int, day: int) -> str:
 # ── State ──────────────────────────────────────────────────────────────────────
 for k, v in [("conditions",[]),("selected_table","clients"),
              ("results",None),("enrich_count",None),
-             ("last_where",""),("last_params",[])]:
+             ("last_where",""),("last_params",[]),("editing_leaf",None)]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -300,6 +300,74 @@ def _prefix_html(prefix_parts, connector, connector_color):
                   f"white-space:pre;color:{connector_color};'>{connector}</span>")
     return spans
 
+def _small_edit_button(idx):
+    """Petit bouton ✏️ discret positionné sur la feuille."""
+    m = f"editbtn-{idx}"
+    st.markdown(
+        f'<div id="{m}"></div><style>'
+        f"div.element-container:has(#{m}) + div.element-container button{{"
+        f"background:transparent!important;color:#475569!important;"
+        f"border:1px solid #2a2d3e!important;border-radius:4px!important;"
+        f"font-size:.72rem!important;padding:1px 6px!important;"
+        f"min-height:0!important;line-height:1.4!important;}}"
+        f"div.element-container:has(#{m}) + div.element-container button:hover{{"
+        f"color:#94a3b8!important;border-color:#475569!important;"
+        f"background:#1a1d27!important;transform:none!important;box-shadow:none!important;}}"
+        f"</style>", unsafe_allow_html=True)
+    if st.button("✏️", key=f"editbtn_{idx}", help="Modifier / Supprimer"):
+        st.session_state.editing[idx] = "leaf"
+        st.rerun()
+
+def _render_leaf_editor(conditions, idx):
+    """Formulaire d'édition inline affiché à la place de la feuille."""
+    cond    = conditions[idx]
+    is_date = cond.get("is_date", False)
+
+    if is_date:
+        parts     = cond["value"].split("-")
+        cur_year  = int(parts[0]) if len(parts) >= 1 else 2023
+        cur_month = int(parts[1]) if len(parts) >= 2 else 0
+        cur_day   = int(parts[2]) if len(parts) >= 3 else 0
+        e1, e2, e3, e4, e5 = st.columns([1.5, 1, 1, 0.5, 0.5])
+        e1.number_input("Année", 1900, 2100, cur_year, key=f"ey_{idx}", label_visibility="collapsed")
+        e2.number_input("Mois",  0, 12, cur_month,     key=f"em_{idx}", label_visibility="collapsed")
+        e3.number_input("Jour",  0, 31, cur_day,       key=f"ed_{idx}", label_visibility="collapsed")
+        with e4:
+            if st.button("✓", key=f"eok_{idx}", help="Valider"):
+                st.session_state.conditions[idx]["value"] = build_date_value(
+                    int(st.session_state.get(f"ey_{idx}", cur_year)),
+                    int(st.session_state.get(f"em_{idx}", cur_month)),
+                    int(st.session_state.get(f"ed_{idx}", cur_day)),
+                )
+                st.session_state.editing.pop(idx, None)
+                st.rerun()
+        with e5:
+            if st.button("🗑", key=f"edel_{idx}", help="Supprimer la condition"):
+                st.session_state.conditions.pop(idx)
+                st.session_state.editing.pop(idx, None)
+                st.rerun()
+    else:
+        e1, e2, e3, e4, e5 = st.columns([2.2, 1.8, 0.45, 0.45, 0.45])
+        e1.text_input("Valeur", value=cond["value"],
+                      key=f"ev_{idx}", label_visibility="collapsed")
+        e2.selectbox("Op", OP_LABELS, index=OP_LABELS.index(cond["operator"]),
+                     key=f"eop_{idx}", label_visibility="collapsed")
+        with e3:
+            if st.button("✓", key=f"eok_{idx}", help="Valider"):
+                st.session_state.conditions[idx]["value"]    = st.session_state.get(f"ev_{idx}",  cond["value"])
+                st.session_state.conditions[idx]["operator"] = st.session_state.get(f"eop_{idx}", cond["operator"])
+                st.session_state.editing.pop(idx, None)
+                st.rerun()
+        with e4:
+            if st.button("🗑", key=f"edel_{idx}", help="Supprimer la condition"):
+                st.session_state.conditions.pop(idx)
+                st.session_state.editing.pop(idx, None)
+                st.rerun()
+        with e5:
+            if st.button("✗", key=f"ecancel_{idx}", help="Annuler"):
+                st.session_state.editing.pop(idx, None)
+                st.rerun()
+
 def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=False, parent_op=None):
     if prefix_parts is None: prefix_parts = []
     connector       = "" if is_root else ("└── " if is_last else "├── ")
@@ -308,13 +376,38 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
     ph              = _prefix_html(prefix_parts, connector, connector_color)
 
     if node["type"] == "leaf":
-        if ph:
-            w = max(prefix_len * 0.135, 0.35)
-            ca, cb = st.columns([w, max(9-w, 1)])
-            ca.markdown(f"<div style='padding-top:8px;line-height:1;'>{ph}</div>", unsafe_allow_html=True)
-            cb.markdown(f"<div style='padding-top:6px;'>{_leaf_html(conditions, node['idx'])}</div>", unsafe_allow_html=True)
+        idx        = node["idx"]
+        is_editing = st.session_state.editing.get(idx) == "leaf"
+
+        if is_editing:
+            # Formulaire d'édition — même indentation que la feuille
+            if ph:
+                w = max(prefix_len * 0.135, 0.35)
+                ca, cb = st.columns([w, max(9 - w, 1)])
+                ca.markdown(f"<div style='padding-top:8px;line-height:1;'>{ph}</div>",
+                            unsafe_allow_html=True)
+                with cb:
+                    _render_leaf_editor(conditions, idx)
+            else:
+                _render_leaf_editor(conditions, idx)
         else:
-            st.markdown(_leaf_html(conditions, node["idx"]), unsafe_allow_html=True)
+            # Feuille normale + petit bouton ✏️ discret
+            leaf_h = _leaf_html(conditions, idx)
+            if ph:
+                w = max(prefix_len * 0.135, 0.35)
+                ca, cb, cc = st.columns([w, max(8.4 - w, 1), 0.6])
+                ca.markdown(f"<div style='padding-top:8px;line-height:1;'>{ph}</div>",
+                            unsafe_allow_html=True)
+                cb.markdown(f"<div style='padding-top:6px;'>{leaf_h}</div>",
+                            unsafe_allow_html=True)
+                with cc:
+                    _small_edit_button(idx)
+            else:
+                c1, c2 = st.columns([9.4, 0.6])
+                c1.markdown(f"<div style='padding-top:2px;'>{leaf_h}</div>",
+                            unsafe_allow_html=True)
+                with c2:
+                    _small_edit_button(idx)
     else:
         op, right_idx = node["op"], node["right"]["idx"]
         if ph:
