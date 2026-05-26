@@ -348,9 +348,8 @@ def _render_leaf_editor(conditions, idx):
 
     if is_bulk:
         current_text = "\n".join(cond["values"])
-        st.text_area("Valeurs (une par ligne ou séparées par des virgules)",
-                     value=current_text, key=f"ev_{idx}", height=100,
-                     label_visibility="collapsed")
+        st.text_area("Valeurs", value=current_text, key=f"ev_{idx}",
+                     height=100, label_visibility="collapsed")
         e1, e2 = st.columns([1, 1])
         with e1:
             if st.button("✓ Valider", key=f"eok_{idx}", use_container_width=True):
@@ -378,9 +377,9 @@ def _render_leaf_editor(conditions, idx):
         cur_month = int(parts[1]) if len(parts) >= 2 else 0
         cur_day   = int(parts[2]) if len(parts) >= 3 else 0
         e1, e2, e3, e4, e5 = st.columns([1.5, 1, 1, 0.5, 0.5])
-        e1.number_input("Année", 1900, 2100, cur_year, key=f"ey_{idx}", label_visibility="collapsed")
-        e2.number_input("Mois",  0, 12, cur_month,     key=f"em_{idx}", label_visibility="collapsed")
-        e3.number_input("Jour",  0, 31, cur_day,       key=f"ed_{idx}", label_visibility="collapsed")
+        e1.number_input("Année", 1900, 2100, cur_year,  key=f"ey_{idx}", label_visibility="collapsed")
+        e2.number_input("Mois",  0, 12, cur_month,      key=f"em_{idx}", label_visibility="collapsed")
+        e3.number_input("Jour",  0, 31, cur_day,        key=f"ed_{idx}", label_visibility="collapsed")
         with e4:
             if st.button("✓", key=f"eok_{idx}", help="Valider"):
                 st.session_state.conditions[idx]["value"] = build_date_value(
@@ -391,10 +390,11 @@ def _render_leaf_editor(conditions, idx):
                 st.session_state.editing.pop(idx, None)
                 st.rerun()
         with e5:
-            if st.button("🗑", key=f"edel_{idx}", help="Supprimer la condition"):
+            if st.button("🗑", key=f"edel_{idx}", help="Supprimer"):
                 st.session_state.conditions.pop(idx)
                 st.session_state.editing.pop(idx, None)
                 st.rerun()
+
     else:
         e1, e2, e3, e4, e5 = st.columns([2.2, 1.8, 0.45, 0.45, 0.45])
         e1.text_input("Valeur", value=cond["value"],
@@ -408,50 +408,7 @@ def _render_leaf_editor(conditions, idx):
                 st.session_state.editing.pop(idx, None)
                 st.rerun()
         with e4:
-            if st.button("🗑", key=f"edel_{idx}", help="Supprimer la condition"):
-                st.session_state.conditions.pop(idx)
-                st.session_state.editing.pop(idx, None)
-                st.rerun()
-        with e5:
-            if st.button("✗", key=f"ecancel_{idx}", help="Annuler"):
-                st.session_state.editing.pop(idx, None)
-                st.rerun()
-        parts     = cond["value"].split("-")
-        cur_year  = int(parts[0]) if len(parts) >= 1 else 2023
-        cur_month = int(parts[1]) if len(parts) >= 2 else 0
-        cur_day   = int(parts[2]) if len(parts) >= 3 else 0
-        e1, e2, e3, e4, e5 = st.columns([1.5, 1, 1, 0.5, 0.5])
-        e1.number_input("Année", 1900, 2100, cur_year, key=f"ey_{idx}", label_visibility="collapsed")
-        e2.number_input("Mois",  0, 12, cur_month,     key=f"em_{idx}", label_visibility="collapsed")
-        e3.number_input("Jour",  0, 31, cur_day,       key=f"ed_{idx}", label_visibility="collapsed")
-        with e4:
-            if st.button("✓", key=f"eok_{idx}", help="Valider"):
-                st.session_state.conditions[idx]["value"] = build_date_value(
-                    int(st.session_state.get(f"ey_{idx}", cur_year)),
-                    int(st.session_state.get(f"em_{idx}", cur_month)),
-                    int(st.session_state.get(f"ed_{idx}", cur_day)),
-                )
-                st.session_state.editing.pop(idx, None)
-                st.rerun()
-        with e5:
-            if st.button("🗑", key=f"edel_{idx}", help="Supprimer la condition"):
-                st.session_state.conditions.pop(idx)
-                st.session_state.editing.pop(idx, None)
-                st.rerun()
-    else:
-        e1, e2, e3, e4, e5 = st.columns([2.2, 1.8, 0.45, 0.45, 0.45])
-        e1.text_input("Valeur", value=cond["value"],
-                      key=f"ev_{idx}", label_visibility="collapsed")
-        e2.selectbox("Op", OP_LABELS, index=OP_LABELS.index(cond["operator"]),
-                     key=f"eop_{idx}", label_visibility="collapsed")
-        with e3:
-            if st.button("✓", key=f"eok_{idx}", help="Valider"):
-                st.session_state.conditions[idx]["value"]    = st.session_state.get(f"ev_{idx}",  cond["value"])
-                st.session_state.conditions[idx]["operator"] = st.session_state.get(f"eop_{idx}", cond["operator"])
-                st.session_state.editing.pop(idx, None)
-                st.rerun()
-        with e4:
-            if st.button("🗑", key=f"edel_{idx}", help="Supprimer la condition"):
+            if st.button("🗑", key=f"edel_{idx}", help="Supprimer"):
                 st.session_state.conditions.pop(idx)
                 st.session_state.editing.pop(idx, None)
                 st.rerun()
