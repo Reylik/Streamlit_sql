@@ -714,6 +714,7 @@ with col_sql:
             st.session_state.last_where   = where
             st.session_state.last_params  = wparams
             st.session_state.enrich_count = compute_enrich_count(current_table, where, wparams)
+            st.session_state["_last_cell_click"] = None  # réinitialise la déduplication
         except Exception as e:
             st.error(f"Erreur SQL : {e}")
 
@@ -773,11 +774,12 @@ if st.session_state.results is not None:
         with tab1:
             st.caption("💡 Cliquez sur une cellule pour explorer sa valeur.")
             event = st.dataframe(df, width="stretch", hide_index=True,
-                                 on_select="rerun", selection_mode="single-cell",
+                                 on_select="rerun", selection_mode=["single-row", "single-column"],
                                  key="result_df")
-            sel    = event.selection if hasattr(event, "selection") else {}
-            rows_s = sel.get("rows", [])
-            cols_s = sel.get("columns", [])
+            # Compatibilité : event.selection peut être un dict OU un objet avec attributs
+            sel    = getattr(event, "selection", None)
+            rows_s = list(getattr(sel, "rows",    None) or (sel or {}).get("rows",    []))
+            cols_s = list(getattr(sel, "columns", None) or (sel or {}).get("columns", []))
             if rows_s and cols_s:
                 # cols_s[0] est un NOM de colonne (string) dans Streamlit ≥ 1.35,
                 # pas un indice entier — correction du bug principal
@@ -1220,6 +1222,7 @@ if st.session_state.results is not None:
                                             st.session_state.last_params)
                 st.session_state.results      = enriched
                 st.session_state.enrich_count = "done"
+                st.session_state["_last_cell_click"] = None  # réinitialise la déduplication
                 st.rerun()
             except Exception as e:
                 st.error(f"Erreur enrichissement : {e}")
