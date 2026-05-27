@@ -187,6 +187,31 @@ OP_LABELS = list(OPERATORS.keys())
 MONTHS_FR = ["","Janvier","Février","Mars","Avril","Mai","Juin",
              "Juillet","Août","Septembre","Octobre","Novembre","Décembre"]
 
+# Colonnes visibles en mode simplifié : (col_technique, label_affichage)
+SIMPLIFIED_COLS = {
+    "clients": [
+        ("nom",              "Nom de famille"),
+        ("prenom",           "Prénom"),
+        ("email",            "Email"),
+        ("ville",            "Ville"),
+        ("pays",             "Pays"),
+        ("date_inscription", "Date d'inscription"),
+        ("statut",           "Statut (actif / inactif)"),
+    ],
+    "voyages": [
+        ("destination",      "Destination"),
+        ("pays_destination", "Pays de destination"),
+        ("continent",        "Continent"),
+        ("date_depart",      "Date de départ"),
+        ("date_retour",      "Date de retour"),
+        ("type_voyage",      "Type de voyage"),
+        ("transport",        "Moyen de transport"),
+        ("budget",           "Budget (€)"),
+        ("statut",           "Statut du voyage"),
+        ("note",             "Note (1 – 5)"),
+    ],
+}
+
 def is_date_col(col: str) -> bool:
     return "date" in col.lower()
 
@@ -199,7 +224,7 @@ def build_date_value(year: int, month: int, day: int) -> str:
 for k, v in [("conditions",[]),("selected_table","clients"),
              ("results",None),("enrich_count",None),
              ("last_where",""),("last_params",[]),("editing",{}),
-             ("_selected_row_idx", None)]:
+             ("_selected_row_idx", None), ("expert_mode", False)]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -295,8 +320,10 @@ def _date_label(val):
 
 def _leaf_html(conditions, idx):
     c = conditions[idx]
+    # Utilise le label convivial si disponible (mode simplifié), sinon le nom de colonne
+    display_col = c.get("label") or c["column"]
     if c.get("is_date"):
-        return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{c['column']}</b> "
+        return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{display_col}</b> "
                 f"<span style='color:#fbbf24;'>en</span> "
                 f"<span style='color:#86efac;'>{_date_label(c['value'])}</span></span>")
     if c.get("is_bulk"):
@@ -307,12 +334,12 @@ def _leaf_html(conditions, idx):
         preview = " · ".join(f"«{v}»" for v in shown)
         suffix  = f" <span style='color:#64748b;font-size:.75rem;'>+{n-3} autres</span>" if n > 3 else ""
         return (f"<span class='t-leaf'>"
-                f"<b style='color:#a5f3fc;'>{c['column']}</b> "
+                f"<b style='color:#a5f3fc;'>{display_col}</b> "
                 f"<span style='color:#fbbf24;'>{op_str}</span> "
                 f"<span style='color:#86efac;'>[{preview}{suffix}]</span>"
                 f"</span>")
     op_str = OP_NATURAL.get(c["operator"], c["operator"])
-    return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{c['column']}</b> "
+    return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{display_col}</b> "
             f"<span style='color:#fbbf24;'>{op_str}</span> "
             f"<span style='color:#86efac;'>«\u202f{c['value']}\u202f»</span></span>")
 
@@ -705,23 +732,58 @@ current_table = st.session_state.selected_table
 current_cols  = TABLES[current_table]
 
 # ── Add condition ──────────────────────────────────────────────────────────────
-st.markdown("### ➕ Ajouter une condition")
+hdr_l, hdr_r = st.columns([5, 3])
+with hdr_l:
+    st.markdown("### ➕ Ajouter une condition")
+with hdr_r:
+    st.markdown("<div style='padding-top:18px;'>", unsafe_allow_html=True)
+    expert_mode = st.toggle(
+        "🔧 Mode expert",
+        key="expert_mode",
+        help="**Mode simplifié** : colonnes essentielles avec libellés clairs\n\n"
+             "**Mode expert** : toutes les colonnes techniques disponibles",
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# ── Résoudre les colonnes selon le mode ───────────────────────────────────────
+if expert_mode:
+    col_options   = current_cols               # noms techniques bruts
+    col_key       = "new_col_expert"
+    new_col_label = None                       # pas de label distinct en expert
+else:
+    simp          = SIMPLIFIED_COLS.get(current_table, [(c, c) for c in current_cols])
+    col_options   = [label for _, label in simp]
+    col_map       = {label: col for col, label in simp}   # label → col technique
+    col_key       = "new_col_simple"
+
+# ── Ligne de formulaire ────────────────────────────────────────────────────────
 fa, fb, fc, fd = st.columns([2, 2, 3, 1])
 with fa:
-    new_col = st.selectbox("Colonne", current_cols, key="new_col", label_visibility="collapsed")
+    selected = st.selectbox("Colonne", col_options, key=col_key,
+                             label_visibility="collapsed")
+    if expert_mode:
+        new_col       = selected
+        new_col_label = selected          # en expert le label = nom technique
+    else:
+        new_col       = col_map.get(selected, selected)
+        new_col_label = selected          # label convivial
+
 with fb:
     is_date = is_date_col(new_col)
     if is_date:
         st.markdown("<span style='color:#a78bfa;font-size:.78rem;'>📅 Colonne date</span>",
                     unsafe_allow_html=True)
     else:
-        new_op = st.selectbox("Opérateur", OP_LABELS, key="new_op", label_visibility="collapsed")
+        new_op = st.selectbox("Opérateur", OP_LABELS, key="new_op",
+                               label_visibility="collapsed")
 with fc:
     if is_date:
         d1, d2, d3 = st.columns(3)
         new_year  = d1.number_input("Année *", 1900, 2100, 2023, 1, key="new_year")
-        new_month = d2.number_input("Mois",    0,    12,   0,    1, key="new_month", help="0 = non précisé")
-        new_day   = d3.number_input("Jour",    0,    31,   0,    1, key="new_day",   help="0 = non précisé")
+        new_month = d2.number_input("Mois",    0,    12,   0,    1, key="new_month",
+                                    help="0 = non précisé")
+        new_day   = d3.number_input("Jour",    0,    31,   0,    1, key="new_day",
+                                    help="0 = non précisé")
     else:
         st.text_area(
             "Valeur(s)",
@@ -732,7 +794,7 @@ with fc:
         )
 with fd:
     new_join = (st.radio("Lier", ["ET","OU"], horizontal=False, key="new_join",
-                         label_visibility="collapsed")
+                          label_visibility="collapsed")
                 if st.session_state.conditions else "ET")
 
 btn_a, btn_b = st.columns([3, 1])
@@ -741,10 +803,12 @@ with btn_a:
         if is_date:
             st.session_state.conditions.append({
                 "column":   new_col,
+                "label":    new_col_label,
                 "operator": "Commence par",
                 "value":    build_date_value(int(new_year), int(new_month), int(new_day)),
                 "join_op":  new_join,
                 "is_date":  True,
+                "is_bulk":  False,
             })
             st.rerun()
         else:
@@ -755,6 +819,7 @@ with btn_a:
             elif len(values) == 1:
                 st.session_state.conditions.append({
                     "column":   new_col,
+                    "label":    new_col_label,
                     "operator": new_op,
                     "value":    values[0],
                     "join_op":  new_join,
@@ -763,9 +828,9 @@ with btn_a:
                 })
                 st.rerun()
             else:
-                # Plusieurs valeurs → une seule feuille bulk
                 st.session_state.conditions.append({
                     "column":   new_col,
+                    "label":    new_col_label,
                     "operator": new_op,
                     "value":    ", ".join(values),
                     "values":   values,
