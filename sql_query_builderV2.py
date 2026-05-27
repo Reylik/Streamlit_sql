@@ -2,9 +2,11 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import re
+import copy
+from datetime import datetime
 
 st.set_page_config(page_title="SQL Query Builder", page_icon="🔍",
-                   layout="wide", initial_sidebar_state="collapsed")
+                   layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -547,6 +549,95 @@ def cell_filter_dialog(col_name, cell_value):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# HISTORIQUE
+# ══════════════════════════════════════════════════════════════════════════════
+MAX_HISTORY = 20
+
+
+def _push_history(table: str, conditions: list, row_count: int) -> None:
+    """Ajoute (ou met à jour) une entrée dans l'historique des requêtes."""
+    query_display = build_query_display(table, conditions)
+    # Extrait uniquement la clause WHERE pour le résumé affiché
+    if "\nWHERE " in query_display:
+        summary = query_display.split("\nWHERE ", 1)[1]
+    else:
+        summary = "Tous les enregistrements"
+
+    entry = {
+        "ts":         datetime.now().strftime("%d/%m %H:%M"),
+        "table":      table,
+        "conditions": copy.deepcopy(conditions),
+        "summary":    summary,
+        "row_count":  row_count,
+    }
+    history = st.session_state.setdefault("query_history", [])
+    # Dédoublonnage : si même requête que la précédente, on met juste à jour
+    if history and history[0]["table"] == table and history[0]["summary"] == summary:
+        history[0].update(ts=entry["ts"], row_count=row_count)
+        return
+    history.insert(0, entry)
+    del history[MAX_HISTORY:]   # borne max
+
+
+def _render_history_sidebar(enrich: dict) -> None:
+    """Panneau latéral : liste des requêtes passées avec relance en un clic."""
+    history = st.session_state.get("query_history", [])
+
+    with st.sidebar:
+        st.markdown(
+            "<span style='color:#94a3b8;font-size:.72rem;text-transform:uppercase;"
+            "letter-spacing:1px;font-family:JetBrains Mono,monospace;'>"
+            f"🕐 Historique ({len(history)} / {MAX_HISTORY})</span>",
+            unsafe_allow_html=True)
+
+        if not history:
+            st.markdown(
+                "<p style='color:#4a5170;font-style:italic;font-size:.82rem;"
+                "margin-top:8px;'>Aucune requête exécutée.</p>",
+                unsafe_allow_html=True)
+            return
+
+        for i, entry in enumerate(history):
+            n      = entry["row_count"]
+            tbl    = entry["table"]
+            ts     = entry["ts"]
+            summ   = entry["summary"]
+            # Troncature de l'affichage pour éviter les entrées trop longues
+            summ_display = (summ[:120] + "…") if len(summ) > 120 else summ
+
+            st.markdown(
+                f"<div style='background:#13151d;border:1px solid #1e2130;"
+                f"border-radius:10px;padding:10px 12px;margin-bottom:8px;'>"
+                f"<div style='display:flex;justify-content:space-between;"
+                f"align-items:center;margin-bottom:5px;'>"
+                f"<span style='font-family:JetBrains Mono,monospace;"
+                f"font-size:.72rem;color:#6366f1;font-weight:600;'>{tbl}</span>"
+                f"<span style='font-size:.7rem;color:#475569;'>{ts}</span>"
+                f"</div>"
+                f"<div style='font-family:JetBrains Mono,monospace;font-size:.72rem;"
+                f"color:#a5f3fc;white-space:pre-wrap;word-break:break-word;"
+                f"line-height:1.55;margin-bottom:7px;'>{summ_display}</div>"
+                f"<span style='font-size:.7rem;color:#4ade80;'>"
+                f"{n} ligne{'s' if n != 1 else ''}</span>"
+                f"</div>",
+                unsafe_allow_html=True)
+
+            if st.button("↩ Relancer", key=f"hist_replay_{i}", use_container_width=True):
+                st.session_state.selected_table      = entry["table"]
+                st.session_state.conditions          = copy.deepcopy(entry["conditions"])
+                st.session_state.results             = None
+                st.session_state.enrich_count        = None
+                st.session_state["_last_cell_click"] = None
+                st.session_state["_auto_execute"]    = True
+                st.rerun()
+
+        st.markdown("<div style='margin-top:4px;'></div>", unsafe_allow_html=True)
+        if st.button("🗑 Vider l'historique", key="hist_clear", use_container_width=True):
+            st.session_state.query_history = []
+            st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # POINT D'ENTRÉE UNIQUE
 # ══════════════════════════════════════════════════════════════════════════════
 def run_app(tables: dict, enrich: dict):
@@ -572,9 +663,29 @@ def run_app(tables: dict, enrich: dict):
     default_table = next(iter(tables))
     for k, v in [("conditions", []), ("selected_table", default_table),
                  ("results", None), ("enrich_count", None),
-                 ("last_where", ""), ("last_params", []), ("editing", {})]:
+                 ("last_where", ""), ("last_params", []), ("editing", {}),
+                 ("query_history", [])]:          # ← historique initialisé ici
         if k not in st.session_state:
             st.session_state[k] = v
+
+    # ── Panneau historique (sidebar) ──────────────────────────────────────────
+    _render_history_sidebar(enrich)
+
+    # ── Auto-exécution : relance depuis l'historique ──────────────────────────
+    if st.session_state.pop("_auto_execute", False):
+        _q, _p = build_query(st.session_state.selected_table, st.session_state.conditions)
+        try:
+            _res = pd.read_sql_query(_q, get_connection(), params=_p)
+            st.session_state.results = _res
+            _w, _wp = build_where(st.session_state.conditions)
+            st.session_state.last_where   = _w
+            st.session_state.last_params  = _wp
+            st.session_state.enrich_count = compute_enrich_count(
+                st.session_state.selected_table, _w, _wp, enrich)
+            _push_history(st.session_state.selected_table,
+                          st.session_state.conditions, len(_res))
+        except Exception as _e:
+            st.error(f"Erreur SQL (relance) : {_e}")
 
     # ── En-tête ───────────────────────────────────────────────────────────────
     st.markdown("# 🔍 SQL Query Builder")
@@ -689,12 +800,14 @@ def run_app(tables: dict, enrich: dict):
         if st.button("▶ Exécuter la requête", width="stretch", type="primary"):
             q, params = build_query(current_table, st.session_state.conditions)
             try:
-                st.session_state.results = pd.read_sql_query(q, get_connection(), params=params)
+                results = pd.read_sql_query(q, get_connection(), params=params)
+                st.session_state.results = results
                 where, wparams = build_where(st.session_state.conditions)
                 st.session_state.last_where   = where
                 st.session_state.last_params  = wparams
                 st.session_state.enrich_count = compute_enrich_count(current_table, where, wparams, enrich)
                 st.session_state["_last_cell_click"] = None
+                _push_history(current_table, st.session_state.conditions, len(results))
             except Exception as e:
                 st.error(f"Erreur SQL : {e}")
 
