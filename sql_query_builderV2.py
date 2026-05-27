@@ -872,6 +872,7 @@ def run_app(tables: dict, enrich: dict):
                 st.session_state["_last_cell_click"] = None
                 _db_push_history(conn, user_id, current_table,
                                  st.session_state.conditions, len(results))
+                st.rerun()  # le popover (rendu en haut) relit la DB avec la nouvelle entrée
             except Exception as e:
                 st.error(f"Erreur SQL : {e}")
 
