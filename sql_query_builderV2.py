@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import re
+import time
 
 st.set_page_config(page_title="SQL Query Builder", page_icon="🔍",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -197,7 +198,8 @@ def build_date_value(year: int, month: int, day: int) -> str:
 # ── State ──────────────────────────────────────────────────────────────────────
 for k, v in [("conditions",[]),("selected_table","clients"),
              ("results",None),("enrich_count",None),
-             ("last_where",""),("last_params",[]),("editing",{})]:
+             ("last_where",""),("last_params",[]),("editing",{}),
+             ("_selected_row_idx", None)]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -509,76 +511,163 @@ def render_tree(conditions, table):
     _render_node(tree, conditions, prefix_parts=[], is_last=True, is_root=True, parent_op=None)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# DIALOG
+# PANEL INLINE (remplace @st.dialog — fiable dans toutes les versions Streamlit)
 # ══════════════════════════════════════════════════════════════════════════════
-@st.dialog("🔎 Explorer cette valeur")
-def cell_filter_dialog(col_name, cell_value):
-    str_value = str(cell_value)
+def render_row_panel(df: "pd.DataFrame", row_idx: int) -> None:
+    """Panel affiché sous le tableau quand une ligne est sélectionnée."""
+    row     = df.iloc[row_idx]
+    cols    = list(df.columns)
+
+    # Colonne et valeur actives (persistées via session_state)
+    col_key = f"panel_col_{row_idx}"
+    if col_key not in st.session_state:
+        st.session_state[col_key] = cols[0]
+
     st.markdown(
-        f"<div style='background:#13151d;border:1px solid #1e2130;border-radius:10px;"
-        f"padding:12px 16px;margin-bottom:16px;'>"
-        f"<span style='color:#94a3b8;font-size:.72rem;text-transform:uppercase;"
-        f"letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Cellule sélectionnée</span><br>"
-        f"<span style='font-family:JetBrains Mono,monospace;font-size:.92rem;'>"
-        f"<b style='color:#a5f3fc;'>{col_name}</b>"
-        f" <span style='color:#fbbf24;'>=</span>"
-        f" <span style='color:#86efac;'>«{str_value}»</span></span></div>",
-        unsafe_allow_html=True)
-    tables_with_col = [t for t, cols in TABLES.items() if col_name in cols]
-    target_table = st.selectbox("Table cible", tables_with_col,
-        index=tables_with_col.index(st.session_state.selected_table)
-              if st.session_state.selected_table in tables_with_col else 0,
-        key="dlg_table")
-    op = st.selectbox("Opérateur", OP_LABELS, key="dlg_op")
-    sym, fn = OPERATORS[op]; tv = fn(str_value)
+        "<div style='background:#13151d;border:1px solid #6366f1;"
+        "border-radius:12px;padding:16px 20px;margin-top:12px;'>",
+        unsafe_allow_html=True,
+    )
+
+    # ── En-tête ────────────────────────────────────────────────────────────────
+    h1, h2 = st.columns([8, 1])
+    with h1:
+        st.markdown(
+            f"<span style='color:#94a3b8;font-size:.75rem;text-transform:uppercase;"
+            f"letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Ligne {row_idx} sélectionnée</span>",
+            unsafe_allow_html=True,
+        )
+    with h2:
+        if st.button("✕", key="panel_close", help="Fermer"):
+            st.session_state["_selected_row_idx"] = None
+            st.rerun()
+
+    # ── Valeurs de la ligne (badges cliquables) ────────────────────────────────
+    st.markdown("<div style='display:flex;flex-wrap:wrap;gap:6px;margin:10px 0;'>",
+                unsafe_allow_html=True)
+    badge_html = ""
+    for c in cols:
+        val = row[c]
+        is_active = (c == st.session_state.get(col_key))
+        bg    = "#1e3a5f" if is_active else "#1e293b"
+        border= "#6366f1" if is_active else "#334155"
+        color = "#a5f3fc" if is_active else "#94a3b8"
+        badge_html += (
+            f"<span style='background:{bg};border:1px solid {border};"
+            f"border-radius:6px;padding:3px 10px;font-size:.75rem;"
+            f"font-family:JetBrains Mono,monospace;cursor:pointer;'>"
+            f"<span style='color:{color};font-weight:600;'>{c}</span>"
+            f"<span style='color:#64748b;'> : </span>"
+            f"<span style='color:#e2e8f0;'>{val}</span></span>"
+        )
+    st.markdown(badge_html + "</div>", unsafe_allow_html=True)
+
+    # ── Sélecteurs ────────────────────────────────────────────────────────────
+    pc1, pc2, pc3 = st.columns([2, 2, 3])
+    with pc1:
+        # Colonne : label avec valeur
+        col_options = [f"{c} : {row[c]}" for c in cols]
+        cur_label   = f"{st.session_state[col_key]} : {row[st.session_state[col_key]]}"
+        sel_label   = st.selectbox(
+            "Colonne", col_options,
+            index=col_options.index(cur_label) if cur_label in col_options else 0,
+            key=f"panel_col_sel_{row_idx}",
+            label_visibility="collapsed",
+        )
+        sel_col = sel_label.split(" : ")[0]
+        st.session_state[col_key] = sel_col
+
+    with pc2:
+        sel_op = st.selectbox("Opérateur", OP_LABELS,
+                              key=f"panel_op_{row_idx}",
+                              label_visibility="collapsed")
+
+    with pc3:
+        tables_with_col = [t for t, tc in TABLES.items() if sel_col in tc]
+        sel_table = st.selectbox(
+            "Table",
+            tables_with_col,
+            index=tables_with_col.index(st.session_state.selected_table)
+                  if st.session_state.selected_table in tables_with_col else 0,
+            key=f"panel_tbl_{row_idx}",
+            label_visibility="collapsed",
+        )
+
+    # ── SQL preview ────────────────────────────────────────────────────────────
+    sel_val = str(row[sel_col])
+    sym, fn = OPERATORS[sel_op]
+    tv      = fn(sel_val)
     st.markdown(
-        f"<div style='background:#0a0c12;border:1px solid #1e2130;border-left:3px solid #6366f1;"
-        f"border-radius:8px;padding:8px 14px;font-family:JetBrains Mono,monospace;"
-        f"font-size:.8rem;color:#a5f3fc;margin:8px 0 14px;'>"
-        f"SELECT * FROM <b>{target_table}</b> WHERE <b>{col_name}</b>"
+        f"<div style='background:#0a0c12;border-left:3px solid #6366f1;"
+        f"border-radius:6px;padding:7px 12px;font-family:JetBrains Mono,monospace;"
+        f"font-size:.78rem;color:#a5f3fc;margin:8px 0;'>"
+        f"SELECT * FROM <b>{sel_table}</b> WHERE <b>{sel_col}</b>"
         f" <span style='color:#fbbf24'>{sym}</span>"
         f" <span style='color:#86efac'>'{tv}'</span></div>",
-        unsafe_allow_html=True)
-    if st.button("▶ Lancer la requête", width="stretch", type="primary", key="dlg_run"):
-        conn = get_connection()
-        q = f"SELECT * FROM {target_table} WHERE {col_name} {sym} ?"
-        try:
-            st.session_state.results        = pd.read_sql_query(q, conn, params=[tv])
-            st.session_state.selected_table = target_table
-            st.session_state.conditions     = [{"column":col_name,"operator":op,"value":str_value,"join_op":"ET"}]
-            where, params = build_where(st.session_state.conditions)
-            st.session_state.last_where  = where
-            st.session_state.last_params = params
-            st.session_state.enrich_count = compute_enrich_count(target_table, where, params)
-        except Exception as e: st.error(f"Erreur SQL : {e}"); return
-        st.rerun()
-    ck = f"cnt_{target_table}__{col_name}__{op}__{str_value}"
-    if ck in st.session_state:
-        cnt = st.session_state[ck]
-        st.markdown(
-            f"<div style='background:#14532d;border:2px solid #16a34a;border-radius:8px;"
-            f"padding:12px;text-align:center;'>"
-            f"<span style='color:#86efac;font-size:.72rem;text-transform:uppercase;"
-            f"letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Résultats estimés</span><br>"
-            f"<span style='color:#4ade80;font-size:2.2rem;font-weight:800;"
-            f"font-family:JetBrains Mono,monospace;'>{cnt}</span>"
-            f"<span style='color:#86efac;font-size:.85rem;'> ligne(s)</span></div>",
-            unsafe_allow_html=True)
-    else:
-        if st.button("🔢 Estimer le nombre de résultats (COUNT)", width="stretch", key="dlg_count"):
-            conn = get_connection(); q2 = f"SELECT COUNT(*) AS total FROM {target_table} WHERE {col_name} {sym} ?"
+        unsafe_allow_html=True,
+    )
+
+    # ── Boutons ────────────────────────────────────────────────────────────────
+    pb1, pb2, pb3 = st.columns(3)
+
+    with pb1:
+        if st.button("▶ Lancer la requête", key="panel_run",
+                     width="stretch", type="primary"):
+            conn = get_connection()
+            q    = f"SELECT * FROM {sel_table} WHERE {sel_col} {sym} ?"
             try:
-                r2 = pd.read_sql_query(q2, conn, params=[tv])
-                st.session_state[ck] = int(r2["total"].iloc[0])
-            except Exception as e: st.error(f"Erreur SQL : {e}")
+                st.session_state.results        = pd.read_sql_query(q, conn, params=[tv])
+                st.session_state.selected_table = sel_table
+                st.session_state.conditions     = [{"column": sel_col, "operator": sel_op,
+                                                    "value": sel_val, "join_op": "ET",
+                                                    "is_date": False, "is_bulk": False}]
+                where, params = build_where(st.session_state.conditions)
+                st.session_state.last_where    = where
+                st.session_state.last_params   = params
+                st.session_state.enrich_count  = compute_enrich_count(sel_table, where, params)
+                st.session_state["_selected_row_idx"] = None
+            except Exception as e:
+                st.error(f"Erreur SQL : {e}")
             st.rerun()
-    st.divider()
-    st.markdown("<span style='color:#94a3b8;font-size:.8rem;'>Ou ajouter comme condition dans l'arbre :</span>",
-                unsafe_allow_html=True)
-    join = st.radio("Lier avec", ["ET","OU"], horizontal=True, key="dlg_join") if st.session_state.conditions else "ET"
-    if st.button("➕ Ajouter à l'arbre", width="stretch", key="dlg_add"):
-        st.session_state.conditions.append({"column":col_name,"operator":op,"value":str_value,"join_op":join})
-        st.rerun()
+
+    count_key = f"panel_cnt_{sel_table}__{sel_col}__{sel_op}__{sel_val}"
+    with pb2:
+        if count_key in st.session_state:
+            cnt_val = st.session_state[count_key]
+            st.markdown(
+                f"<div style='background:#14532d;border:1.5px solid #16a34a;"
+                f"border-radius:8px;padding:8px;text-align:center;'>"
+                f"<div style='color:#4ade80;font-size:1.4rem;font-weight:800;"
+                f"font-family:JetBrains Mono,monospace;'>{cnt_val}</div>"
+                f"<div style='color:#86efac;font-size:.68rem;'>ligne(s)</div></div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            if st.button("🔢 Compter", key="panel_count", width="stretch"):
+                conn = get_connection()
+                q    = f"SELECT COUNT(*) AS total FROM {sel_table} WHERE {sel_col} {sym} ?"
+                try:
+                    r = pd.read_sql_query(q, conn, params=[tv])
+                    st.session_state[count_key] = int(r["total"].iloc[0])
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+                st.rerun()
+
+    with pb3:
+        join = "ET"
+        if st.session_state.conditions:
+            join = st.radio("Lier", ["ET","OU"], horizontal=True,
+                            key=f"panel_join_{row_idx}", label_visibility="collapsed")
+        if st.button("➕ Ajouter à l'arbre", key="panel_add", width="stretch"):
+            st.session_state.conditions.append({
+                "column": sel_col, "operator": sel_op,
+                "value": sel_val, "join_op": join,
+                "is_date": False, "is_bulk": False,
+            })
+            st.session_state["_selected_row_idx"] = None
+            st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PAGE
@@ -714,7 +803,6 @@ with col_sql:
             st.session_state.last_where   = where
             st.session_state.last_params  = wparams
             st.session_state.enrich_count = compute_enrich_count(current_table, where, wparams)
-            st.session_state["_last_cell_click"] = None  # réinitialise la déduplication
         except Exception as e:
             st.error(f"Erreur SQL : {e}")
 
@@ -764,6 +852,34 @@ if st.session_state.results is not None:
             "Plage":"#22d3ee","Romantique":"#fb7185",
         }
 
+        # ── Animation clignotante — uniquement les onglets avec nouvelles données ──
+        _hl_until   = st.session_state.get("_enrich_hl_until", 0)
+        _blink_tabs = st.session_state.get("_blink_tabs", set())
+        _do_blink   = time.time() < _hl_until and bool(_blink_tabs)
+        if _do_blink:
+            # Construire le sélecteur CSS uniquement pour les nth-child ciblés
+            selectors = ", ".join(
+                f"div[data-testid='stTabsTabList'] button[role='tab']:nth-child({n})"
+                for n in sorted(_blink_tabs)
+            )
+            st.markdown(f"""
+<style>
+@keyframes tab-pulse {{
+    0%   {{ color: inherit; text-shadow: none; }}
+    40%  {{ color: #4ade80 !important;
+           text-shadow: 0 0 8px #4ade80, 0 0 16px #16a34a; }}
+    100% {{ color: inherit; text-shadow: none; }}
+}}
+{selectors} {{
+    animation: tab-pulse 0.9s ease-in-out infinite;
+}}
+div[data-testid="stTabsTabList"] button[role="tab"][aria-selected="true"] {{
+    animation: none !important;
+    color: inherit !important;
+}}
+</style>
+""", unsafe_allow_html=True)
+
         tab1, tab2, tab3, tab4 = st.tabs(
             ["📋 Grille", "👤 Fiches", "🗓 Timeline", "📈 Statistiques"]
         )
@@ -772,32 +888,25 @@ if st.session_state.results is not None:
         # TAB 1 — Grille
         # ══════════════════════════════════════════════════════════════════════
         with tab1:
-            st.caption("💡 Cliquez sur une cellule pour explorer sa valeur.")
+            st.caption("💡 Cliquez sur une ligne pour explorer ses valeurs et créer un filtre.")
             event = st.dataframe(df, width="stretch", hide_index=True,
-                                 on_select="rerun", selection_mode=["single-row", "single-column"],
+                                 on_select="rerun", selection_mode="single-row",
                                  key="result_df")
-            # Compatibilité : event.selection peut être un dict OU un objet avec attributs
-            sel    = getattr(event, "selection", None)
-            rows_s = list(getattr(sel, "rows",    None) or (sel or {}).get("rows",    []))
-            cols_s = list(getattr(sel, "columns", None) or (sel or {}).get("columns", []))
-            if rows_s and cols_s:
-                # cols_s[0] est un NOM de colonne (string) dans Streamlit ≥ 1.35,
-                # pas un indice entier — correction du bug principal
-                col_ref  = cols_s[0]
-                col_name = col_ref if isinstance(col_ref, str) else df.columns[int(col_ref)]
-                row_idx  = int(rows_s[0])
-                try:
-                    cell_val = df.iloc[row_idx][col_name]
-                except KeyError:
-                    cell_val = df.iloc[row_idx, df.columns.get_loc(col_name)]
-                # Signature unique pour éviter de rouvrir le dialog sur chaque rerun
-                click_sig = f"{row_idx}__{col_name}__{cell_val}"
-                if click_sig != st.session_state.get("_last_cell_click"):
-                    st.session_state["_last_cell_click"]      = click_sig
-                    st.session_state["_cell_dialog_pending"]  = (col_name, cell_val)
+            sel    = event.selection if hasattr(event, "selection") else {}
+            rows_s = sel.get("rows", [])
+            if rows_s:
+                st.session_state["_selected_row_idx"] = int(rows_s[0])
+            elif not rows_s and st.session_state.get("_selected_row_idx") is not None:
+                # L'utilisateur a désélectionné la ligne
+                st.session_state["_selected_row_idx"] = None
             st.download_button("⬇ Télécharger CSV",
                 df.to_csv(index=False).encode("utf-8"),
                 f"resultats_{current_table}.csv", "text/csv")
+
+        # ── Panel de filtrage — affiché sous les tabs (hors contexte tab) ─────
+        row_idx_panel = st.session_state.get("_selected_row_idx")
+        if row_idx_panel is not None and row_idx_panel < len(df):
+            render_row_panel(df, row_idx_panel)
 
         # ══════════════════════════════════════════════════════════════════════
         # TAB 2 — Fiches
@@ -1184,11 +1293,6 @@ if st.session_state.results is not None:
             else:
                 st.info("Statistiques non disponibles pour cette combinaison de colonnes.")
 
-    # ── Dialog cellule — appelé HORS du contexte tabs pour fiabilité ──────────
-    if st.session_state.get("_cell_dialog_pending"):
-        col_n, val_n = st.session_state.pop("_cell_dialog_pending")
-        cell_filter_dialog(col_n, val_n)
-
     # ── Enrichment button ───────────────────────────────────────────────────────
     st.markdown("---")
     if cnt is None:
@@ -1217,12 +1321,34 @@ if st.session_state.results is not None:
             f"🔗 Enrichir avec {other_table} — {cnt} ligne{'s' if cnt>1 else ''} disponible{'s' if cnt>1 else ''}",
             width="stretch", key="enrich_btn"):
             try:
+                old_cols = set(df.columns)
                 enriched = run_enrich_query(current_table,
                                             st.session_state.last_where,
                                             st.session_state.last_params)
-                st.session_state.results      = enriched
-                st.session_state.enrich_count = "done"
-                st.session_state["_last_cell_click"] = None  # réinitialise la déduplication
+                new_cols  = set(enriched.columns)
+                added     = new_cols - old_cols
+
+                # Déterminer quels onglets ont de nouvelles données
+                # Tab positions: 1=Grille, 2=Fiches, 3=Timeline, 4=Statistiques
+                blink = set()
+
+                # Fiches : nouvelles colonnes de l'autre table visibles dans les cartes
+                if added & {"destination","client_nom","client_prenom",
+                            "voyage_id","date_depart","type_voyage"}:
+                    blink.add(2)
+
+                # Timeline : date_depart nouvellement disponible
+                if "date_depart" in added and "date_depart" not in old_cols:
+                    blink.add(3)
+
+                # Statistiques : nouvelles métriques calculables
+                if added & {"budget","continent","type_voyage","ville","note"}:
+                    blink.add(4)
+
+                st.session_state.results           = enriched
+                st.session_state.enrich_count      = "done"
+                st.session_state["_enrich_hl_until"] = time.time() + 20
+                st.session_state["_blink_tabs"]      = blink
                 st.rerun()
             except Exception as e:
                 st.error(f"Erreur enrichissement : {e}")
