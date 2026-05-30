@@ -3722,25 +3722,12 @@ def run_app(schema: dict, enrich: dict):
             _statut_col = _find_col(df, "statut", "clients_statut")
 
             # ── Toggle vue ────────────────────────────────────────────────────
-            _view = st.session_state.get("tab2_view", "client")
-            _tcols = st.columns([1, 1, 8])
-            if _tcols[0].button(
-                "👤  Clients",
-                key="tab2_view_client",
-                type="primary" if _view == "client" else "secondary",
-                use_container_width=True,
-            ):
-                st.session_state["tab2_view"] = "client"
-                st.rerun()
-            if _tcols[1].button(
-                "✈️  Voyages",
-                key="tab2_view_voyage",
-                type="primary" if _view == "voyage" else "secondary",
-                use_container_width=True,
-            ):
-                st.session_state["tab2_view"] = "voyage"
-                st.rerun()
-            _view = st.session_state.get("tab2_view", "client")
+            _sel  = st.radio(
+                "Vue", ["👤  Clients", "✈️  Voyages"],
+                horizontal=True, label_visibility="collapsed",
+                key="tab2_view_radio",
+            )
+            _view = "client" if "Clients" in _sel else "voyage"
             st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
 
             # ── Chargement compagnons (commun aux deux vues) ──────────────────
