@@ -2,7 +2,11 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import re
-import time
+import copy
+import uuid
+import json
+import os
+from datetime import datetime
 
 st.set_page_config(page_title="SQL Query Builder", page_icon="🔍",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -51,128 +55,2521 @@ hr{border-color:#1e2130!important;}
 ::-webkit-scrollbar-track{background:#0d0f14;}
 ::-webkit-scrollbar-thumb{background:#2a2d3e;border-radius:3px;}
 ::-webkit-scrollbar-thumb:hover{background:#6366f1;}
-/* Enrich button override */
-.enrich-btn button{
-   background:linear-gradient(135deg,#065f46,#047857)!important;
-   border:1px solid #059669!important;
-   box-shadow:0 0 12px #05966944!important;}
-.enrich-btn button:hover{
-   filter:brightness(1.15)!important;}
 </style>
 """, unsafe_allow_html=True)
 
-# ── DB ─────────────────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DB
+# ══════════════════════════════════════════════════════════════════════════════
 @st.cache_resource
 def get_connection():
     conn = sqlite3.connect(":memory:", check_same_thread=False)
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS clients(id INTEGER PRIMARY KEY,nom TEXT,prenom TEXT,
-      email TEXT,telephone TEXT,ville TEXT,pays TEXT,date_inscription TEXT,statut TEXT);
+      email TEXT,telephone TEXT,ville TEXT,pays TEXT,date_inscription TEXT,statut TEXT,
+      nationalite TEXT,num_passeport TEXT,date_expiration_passeport TEXT,
+      num_carte_identite TEXT,date_expiration_ci TEXT,
+      profession TEXT,employeur TEXT,situation_pro TEXT);
     INSERT INTO clients VALUES
-    (1,'Lemaire','Sophie','sophie.lemaire@mail.fr','0612345678','Paris','France','2020-01-15','actif'),
-    (2,'Garnier','Thomas','t.garnier@mail.fr','0623456789','Lyon','France','2019-06-22','actif'),
-    (3,'Faure','Julie','julie.faure@mail.fr','0634567890','Marseille','France','2021-03-10','actif'),
-    (4,'Chevalier','Marc','marc.chev@mail.fr','0645678901','Bordeaux','France','2018-11-05','inactif'),
-    (5,'Morin','Lucie','lucie.morin@mail.fr','0656789012','Nantes','France','2022-07-30','actif'),
-    (6,'Perrin','Antoine','a.perrin@mail.fr','0667890123','Toulouse','France','2020-09-14','actif'),
-    (7,'Blanc','Camille','c.blanc@mail.fr','0678901234','Strasbourg','France','2023-02-01','actif'),
-    (8,'Renard','Nicolas','n.renard@mail.fr','0689012345','Lille','France','2017-05-18','inactif'),
-    (9,'Vidal','Inès','ines.vidal@mail.fr','0690123456','Nice','France','2021-12-25','actif'),
-    (10,'Roy','Kevin','kevin.roy@mail.fr','0601234567','Rennes','France','2022-04-03','actif'),
-    (11,'Caron','Éléonore','e.caron@mail.fr','0611223344','Paris','France','2019-08-19','actif'),
-    (12,'Picard','Bastien','b.picard@mail.fr','0622334455','Montpellier','France','2023-10-11','actif');
+    (1,'Lemaire','Sophie','sophie.lemaire@mail.fr','0612345678','Paris','France','2020-01-15','actif','Française','FP123456','2028-06-15','9901234567890','2025-08-20','Ingénieure informatique','TechCorp SA','CDI'),
+    (2,'Garnier','Thomas','t.garnier@mail.fr','0623456789','Lyon','France','2019-06-22','actif','Française','FP234567','2027-03-22','9912345678901','2024-11-30','Consultant','McKinsey France','CDI'),
+    (3,'Faure','Julie','julie.faure@mail.fr','0634567890','Marseille','France','2021-03-10','actif','Française','FP345678','2029-01-10','9923456789012','2026-04-15','Médecin','CHU Marseille','Titulaire'),
+    (4,'Chevalier','Marc','marc.chev@mail.fr','0645678901','Bordeaux','France','2018-11-05','inactif','Française','FP456789','2025-09-05','9934567890123','2023-12-01','Directeur commercial','AutoParts SAS','CDI'),
+    (5,'Morin','Lucie','lucie.morin@mail.fr','0656789012','Nantes','France','2022-07-30','actif','Française',NULL,NULL,'9945678901234','2027-06-20','Graphiste','Freelance','Indépendante'),
+    (6,'Perrin','Antoine','a.perrin@mail.fr','0667890123','Toulouse','France','2020-09-14','actif','Française','FP678901','2026-12-14','9956789012345','2025-03-10','Avocat','Cabinet Perrin & Associés','Libéral'),
+    (7,'Blanc','Camille','c.blanc@mail.fr','0678901234','Strasbourg','France','2023-02-01','actif','Française','FP789012','2030-02-01','9967890123456','2028-01-25','Architecte','Studio 42','CDI'),
+    (8,'Renard','Nicolas','n.renard@mail.fr','0689012345','Lille','France','2017-05-18','inactif','Française','FP890123','2024-05-18',NULL,NULL,'Retraité',NULL,'Retraité'),
+    (9,'Vidal','Inès','ines.vidal@mail.fr','0690123456','Nice','France','2021-12-25','actif','Française','FP901234','2028-12-25','9989012345678','2026-09-30','Chef de projet','BNP Paribas','CDI'),
+    (10,'Roy','Kevin','kevin.roy@mail.fr','0601234567','Rennes','France','2022-04-03','actif','Française',NULL,NULL,'9990123456789','2027-04-03','Développeur full-stack','StartupXYZ','CDI'),
+    (11,'Caron','Éléonore','e.caron@mail.fr','0611223344','Paris','France','2019-08-19','actif','Française','FP122334','2027-08-19','9901122334455','2025-11-15','Professeure','Lycée Victor Hugo','Titulaire'),
+    (12,'Picard','Bastien','b.picard@mail.fr','0622334455','Montpellier','France','2023-10-11','actif','Française',NULL,NULL,'9912233445566','2028-10-11','Étudiant','Université Paris-Dauphine','Alternance');
 
     CREATE TABLE IF NOT EXISTS voyages(id INTEGER PRIMARY KEY,client_id INTEGER,
       destination TEXT,pays_destination TEXT,continent TEXT,
       date_depart TEXT,date_retour TEXT,duree_jours INTEGER,
       type_voyage TEXT,transport TEXT,hotel TEXT,
-      budget REAL,statut TEXT,note INTEGER,
+      budget REAL,statut TEXT,note INTEGER,groupe_voyage_id INTEGER,
       FOREIGN KEY(client_id) REFERENCES clients(id));
     INSERT INTO voyages VALUES
-    (1,1,'Tokyo','Japon','Asie','2023-04-10','2023-04-24',14,'Tourisme','Avion','Grand Hyatt Tokyo',3200.00,'terminé',5),
-    (2,1,'Barcelone','Espagne','Europe','2022-07-15','2022-07-22',7,'Tourisme','Train','Hotel Arts',1100.00,'terminé',4),
-    (3,2,'New York','États-Unis','Amérique','2023-08-01','2023-08-10',9,'Affaires','Avion','Marriott Times Square',2800.00,'terminé',4),
-    (4,2,'Rome','Italie','Europe','2022-12-20','2022-12-27',7,'Tourisme','Avion','Hotel Eden',1350.00,'terminé',5),
-    (5,3,'Bali','Indonésie','Asie','2023-06-01','2023-06-15',14,'Détente','Avion','Four Seasons Bali',2900.00,'terminé',5),
-    (6,3,'Lisbonne','Portugal','Europe','2024-03-10','2024-03-14',4,'City Break','Avion','Bairro Alto Hotel',750.00,'terminé',4),
-    (7,4,'Dubai','Émirats Arabes Unis','Asie','2023-01-05','2023-01-12',7,'Luxe','Avion','Burj Al Arab',5500.00,'terminé',5),
-    (8,5,'Marrakech','Maroc','Afrique','2023-10-20','2023-10-27',7,'Culturel','Avion','La Mamounia',1800.00,'terminé',5),
-    (9,5,'Amsterdam','Pays-Bas','Europe','2024-05-01','2024-05-04',3,'City Break','Train','Hotel V Nesplein',620.00,'terminé',3),
-    (10,6,'Maldives','Maldives','Asie','2023-02-14','2023-02-21',7,'Lune de miel','Avion','Conrad Maldives',6200.00,'terminé',5),
-    (11,6,'Prague','Tchéquie','Europe','2022-11-03','2022-11-06',3,'City Break','Avion','Augustine Hotel',580.00,'terminé',4),
-    (12,7,'Sydney','Australie','Océanie','2023-12-22','2024-01-05',14,'Tourisme','Avion','Park Hyatt Sydney',4100.00,'terminé',5),
-    (13,7,'Athènes','Grèce','Europe','2023-09-08','2023-09-15',7,'Culturel','Avion','Hotel Grande Bretagne',1250.00,'terminé',4),
-    (14,8,'Reykjavik','Islande','Europe','2023-03-15','2023-03-20',5,'Aventure','Avion','Ion Adventure Hotel',1700.00,'terminé',4),
-    (15,9,'Kyoto','Japon','Asie','2024-04-01','2024-04-10',9,'Culturel','Avion','The Ritz-Carlton Kyoto',3600.00,'terminé',5),
-    (16,9,'Séville','Espagne','Europe','2023-05-18','2023-05-22',4,'City Break','Avion','Hotel Alfonso XIII',890.00,'terminé',4),
-    (17,10,'Cancún','Mexique','Amérique','2023-07-01','2023-07-14',13,'Plage','Avion','Nizuc Resort',3100.00,'terminé',5),
-    (18,10,'Berlin','Allemagne','Europe','2022-10-29','2022-10-31',2,'City Break','Train','Hotel de Rome',410.00,'terminé',3),
-    (19,11,'Cape Town','Afrique du Sud','Afrique','2023-11-10','2023-11-24',14,'Safari','Avion','The Silo Hotel',4800.00,'terminé',5),
-    (20,11,'Bruges','Belgique','Europe','2024-02-14','2024-02-16',2,'Romantique','Train','Hotel Dukes Palace',490.00,'terminé',4),
-    (21,12,'Costa Rica','Costa Rica','Amérique','2024-01-15','2024-01-28',13,'Aventure','Avion','Nayara Springs',3900.00,'terminé',5),
-    (22,1,'Singapour','Singapour','Asie','2024-06-20','2024-06-28',8,'Affaires','Avion','Marina Bay Sands',3400.00,'à venir',NULL),
-    (23,3,'New York','États-Unis','Amérique','2024-09-01','2024-09-08',7,'Tourisme','Avion','The Plaza',2600.00,'à venir',NULL),
-    (24,5,'Tenerife','Espagne','Europe','2024-08-10','2024-08-17',7,'Plage','Avion','Royal Hideaway',1500.00,'à venir',NULL);
+    (1,1,'Tokyo','Japon','Asie','2023-04-10','2023-04-24',14,'Tourisme','Avion','Grand Hyatt Tokyo',3200.00,'terminé',5,1001),
+    (2,1,'Barcelone','Espagne','Europe','2022-07-15','2022-07-22',7,'Tourisme','Train','Hotel Arts',1100.00,'terminé',4,NULL),
+    (3,2,'New York','États-Unis','Amérique','2023-08-01','2023-08-10',9,'Affaires','Avion','Marriott Times Square',2800.00,'terminé',4,NULL),
+    (4,2,'Rome','Italie','Europe','2022-12-20','2022-12-27',7,'Tourisme','Avion','Hotel Eden',1350.00,'terminé',5,NULL),
+    (5,3,'Bali','Indonésie','Asie','2023-06-01','2023-06-15',14,'Détente','Avion','Four Seasons Bali',2900.00,'terminé',5,1002),
+    (6,3,'Lisbonne','Portugal','Europe','2024-03-10','2024-03-14',4,'City Break','Avion','Bairro Alto Hotel',750.00,'terminé',4,NULL),
+    (7,4,'Dubai','Émirats Arabes Unis','Asie','2023-01-05','2023-01-12',7,'Luxe','Avion','Burj Al Arab',5500.00,'terminé',5,NULL),
+    (8,5,'Marrakech','Maroc','Afrique','2023-10-20','2023-10-27',7,'Culturel','Avion','La Mamounia',1800.00,'terminé',5,NULL),
+    (9,5,'Amsterdam','Pays-Bas','Europe','2024-05-01','2024-05-04',3,'City Break','Train','Hotel V Nesplein',620.00,'terminé',3,NULL),
+    (10,6,'Maldives','Maldives','Asie','2023-02-14','2023-02-21',7,'Lune de miel','Avion','Conrad Maldives',6200.00,'terminé',5,1003),
+    (11,6,'Prague','Tchéquie','Europe','2022-11-03','2022-11-06',3,'City Break','Avion','Augustine Hotel',580.00,'terminé',4,NULL),
+    (12,7,'Sydney','Australie','Océanie','2023-12-22','2024-01-05',14,'Tourisme','Avion','Park Hyatt Sydney',4100.00,'terminé',5,NULL),
+    (13,7,'Athènes','Grèce','Europe','2023-09-08','2023-09-15',7,'Culturel','Avion','Hotel Grande Bretagne',1250.00,'terminé',4,NULL),
+    (14,8,'Reykjavik','Islande','Europe','2023-03-15','2023-03-20',5,'Aventure','Avion','Ion Adventure Hotel',1700.00,'terminé',4,NULL),
+    (15,9,'Kyoto','Japon','Asie','2024-04-01','2024-04-10',9,'Culturel','Avion','The Ritz-Carlton Kyoto',3600.00,'terminé',5,NULL),
+    (16,9,'Séville','Espagne','Europe','2023-05-18','2023-05-22',4,'City Break','Avion','Hotel Alfonso XIII',890.00,'terminé',4,NULL),
+    (17,10,'Cancún','Mexique','Amérique','2023-07-01','2023-07-14',13,'Plage','Avion','Nizuc Resort',3100.00,'terminé',5,1004),
+    (18,10,'Berlin','Allemagne','Europe','2022-10-29','2022-10-31',2,'City Break','Train','Hotel de Rome',410.00,'terminé',3,NULL),
+    (19,11,'Cape Town','Afrique du Sud','Afrique','2023-11-10','2023-11-24',14,'Safari','Avion','The Silo Hotel',4800.00,'terminé',5,NULL),
+    (20,11,'Bruges','Belgique','Europe','2024-02-14','2024-02-16',2,'Romantique','Train','Hotel Dukes Palace',490.00,'terminé',4,NULL),
+    (21,12,'Costa Rica','Costa Rica','Amérique','2024-01-15','2024-01-28',13,'Aventure','Avion','Nayara Springs',3900.00,'terminé',5,NULL),
+    (22,1,'Singapour','Singapour','Asie','2024-06-20','2024-06-28',8,'Affaires','Avion','Marina Bay Sands',3400.00,'à venir',NULL,NULL),
+    (23,3,'New York','États-Unis','Amérique','2024-09-01','2024-09-08',7,'Tourisme','Avion','The Plaza',2600.00,'à venir',NULL,NULL),
+    (24,5,'Tenerife','Espagne','Europe','2024-08-10','2024-08-17',7,'Plage','Avion','Royal Hideaway',1500.00,'à venir',NULL,NULL),
+    (25,2,'Tokyo','Japon','Asie','2023-04-10','2023-04-24',14,'Tourisme','Avion','Grand Hyatt Tokyo',3200.00,'terminé',5,1001),
+    (26,11,'Bali','Indonésie','Asie','2023-06-01','2023-06-15',14,'Détente','Avion','Four Seasons Bali',2900.00,'terminé',4,1002),
+    (27,7,'Maldives','Maldives','Asie','2023-02-14','2023-02-21',7,'Lune de miel','Avion','Conrad Maldives',6200.00,'terminé',5,1003),
+    (28,9,'Cancún','Mexique','Amérique','2023-07-01','2023-07-14',13,'Plage','Avion','Nizuc Resort',3100.00,'terminé',4,1004);
+
+    CREATE TABLE IF NOT EXISTS employes(
+      id INTEGER PRIMARY KEY, nom TEXT, prenom TEXT, poste TEXT,
+      email TEXT, telephone TEXT, statut TEXT, date_embauche TEXT
+    );
+    INSERT INTO employes VALUES
+    (1,'Dupont','Marie','Directeur Régional','m.dupont@agency.fr','0601110001','actif','2015-03-01'),
+    (2,'Martin','Pierre','Agent Commercial','p.martin@agency.fr','0601110002','actif','2018-06-15'),
+    (3,'Leblanc','Sophie','Responsable Visa','s.leblanc@agency.fr','0601110003','actif','2017-09-01'),
+    (4,'Bernard','Thomas','Agent Commercial','t.bernard@agency.fr','0601110004','actif','2019-01-15'),
+    (5,'Petit','Claire','Directeur Régional','c.petit@agency.fr','0601110005','actif','2016-04-01'),
+    (6,'Robert','Julien','Responsable Opérations','j.robert@agency.fr','0601110006','actif','2020-02-01'),
+    (7,'Richard','Anaïs','Agent Commercial','a.richard@agency.fr','0601110007','actif','2018-11-01'),
+    (8,'Moreau','Kevin','Responsable Visa','k.moreau@agency.fr','0601110008','inactif','2016-03-01'),
+    (9,'Simon','Lucie','Agent Commercial','l.simon@agency.fr','0601110009','actif','2021-07-01'),
+    (10,'Laurent','Antoine','Directeur Régional','a.laurent@agency.fr','0601110010','actif','2014-09-01'),
+    (11,'Michel','Emma','Responsable Opérations','e.michel@agency.fr','0601110011','actif','2019-05-15'),
+    (12,'Garcia','Lucas','Agent Commercial','l.garcia@agency.fr','0601110012','actif','2022-01-01'),
+    (13,'David','Nina','Responsable Visa','n.david@agency.fr','0601110013','actif','2017-08-01'),
+    (14,'Bertrand','Maxime','Agent Commercial','m.bertrand@agency.fr','0601110014','actif','2020-10-01'),
+    (15,'Roux','Chloé','Directeur Régional','c.roux@agency.fr','0601110015','actif','2015-12-01');
+
+    CREATE TABLE IF NOT EXISTS affectations(
+      id INTEGER PRIMARY KEY, employe_id INTEGER,
+      agence TEXT, ville TEXT, pays TEXT, continent TEXT,
+      date_debut TEXT, date_fin TEXT,
+      FOREIGN KEY(employe_id) REFERENCES employes(id)
+    );
+    INSERT INTO affectations VALUES
+    (1,1,'Agence Paris Opéra','Paris','France','Europe','2015-03-01','2019-08-31'),
+    (2,1,'Agence Tokyo Shinjuku','Tokyo','Japon','Asie','2019-09-01','2021-12-31'),
+    (3,1,'Agence Dubai Centre','Dubai','Émirats Arabes Unis','Asie','2022-01-01','2023-06-30'),
+    (4,1,'Agence Paris Opéra','Paris','France','Europe','2023-07-01',NULL),
+    (5,2,'Agence Lyon Centre','Lyon','France','Europe','2018-06-15','2020-12-31'),
+    (6,2,'Agence Barcelone','Barcelone','Espagne','Europe','2021-01-01','2022-09-30'),
+    (7,2,'Agence Lyon Centre','Lyon','France','Europe','2022-10-01',NULL),
+    (8,3,'Agence Marseille','Marseille','France','Europe','2017-09-01','2020-06-30'),
+    (9,3,'Agence New York','New York','États-Unis','Amérique','2020-07-01','2022-12-31'),
+    (10,3,'Agence Singapour','Singapour','Singapour','Asie','2023-01-01',NULL),
+    (11,4,'Agence Paris Montparnasse','Paris','France','Europe','2019-01-15','2021-03-31'),
+    (12,4,'Agence Marrakech','Marrakech','Maroc','Afrique','2021-04-01','2023-03-31'),
+    (13,4,'Agence Casablanca','Casablanca','Maroc','Afrique','2023-04-01',NULL),
+    (14,5,'Agence Bordeaux','Bordeaux','France','Europe','2016-04-01','2020-11-30'),
+    (15,5,'Agence Sydney','Sydney','Australie','Océanie','2021-01-01','2022-06-30'),
+    (16,5,'Agence Melbourne','Melbourne','Australie','Océanie','2022-07-01',NULL),
+    (17,6,'Agence Toulouse','Toulouse','France','Europe','2020-02-01','2021-09-30'),
+    (18,6,'Agence Tokyo Ginza','Tokyo','Japon','Asie','2021-10-01','2023-09-30'),
+    (19,6,'Agence Séoul','Séoul','Corée du Sud','Asie','2023-10-01',NULL),
+    (20,7,'Agence Nice','Nice','France','Europe','2018-11-01','2021-12-31'),
+    (21,7,'Agence Lisbonne','Lisbonne','Portugal','Europe','2022-01-01','2023-12-31'),
+    (22,7,'Agence Nice','Nice','France','Europe','2024-01-01',NULL),
+    (23,8,'Agence Paris Opéra','Paris','France','Europe','2016-03-01','2020-09-30'),
+    (24,8,'Agence Dubai Marina','Dubai','Émirats Arabes Unis','Asie','2020-10-01','2022-12-31'),
+    (25,9,'Agence Nantes','Nantes','France','Europe','2021-07-01','2022-12-31'),
+    (26,9,'Agence Buenos Aires','Buenos Aires','Argentine','Amérique','2023-01-01','2023-12-31'),
+    (27,9,'Agence Nantes','Nantes','France','Europe','2024-01-01',NULL),
+    (28,10,'Agence Paris Champs-Élysées','Paris','France','Europe','2014-09-01','2019-12-31'),
+    (29,10,'Agence Amsterdam','Amsterdam','Pays-Bas','Europe','2020-01-01','2021-11-30'),
+    (30,10,'Agence Bangkok','Bangkok','Thaïlande','Asie','2021-12-01',NULL),
+    (31,11,'Agence Strasbourg','Strasbourg','France','Europe','2019-05-15','2021-04-30'),
+    (32,11,'Agence Rome','Rome','Italie','Europe','2021-05-01','2023-04-30'),
+    (33,11,'Agence Madrid','Madrid','Espagne','Europe','2023-05-01',NULL),
+    (34,12,'Agence Lille','Lille','France','Europe','2022-01-01','2023-06-30'),
+    (35,12,'Agence Miami','Miami','États-Unis','Amérique','2023-07-01',NULL),
+    (36,13,'Agence Rennes','Rennes','France','Europe','2017-08-01','2020-07-31'),
+    (37,13,'Agence Cape Town','Cape Town','Afrique du Sud','Afrique','2020-08-01','2022-07-31'),
+    (38,13,'Agence Nairobi','Nairobi','Kenya','Afrique','2022-08-01',NULL),
+    (39,14,'Agence Montpellier','Montpellier','France','Europe','2020-10-01','2022-04-30'),
+    (40,14,'Agence Montréal','Montréal','Canada','Amérique','2022-05-01','2023-09-30'),
+    (41,14,'Agence Vancouver','Vancouver','Canada','Amérique','2023-10-01',NULL),
+    (42,15,'Agence Paris Grands Boulevards','Paris','France','Europe','2015-12-01','2020-05-31'),
+    (43,15,'Agence Mexico City','Mexico','Mexique','Amérique','2020-06-01','2022-05-31'),
+    (44,15,'Agence Lima','Lima','Pérou','Amérique','2022-06-01',NULL);
     """)
     conn.commit()
     return conn
 
-# ── Constants ──────────────────────────────────────────────────────────────────
-TABLES = {
-    "clients": ["id","nom","prenom","email","telephone","ville","pays","date_inscription","statut"],
-    "voyages": ["id","client_id","destination","pays_destination","continent",
-                "date_depart","date_retour","duree_jours","type_voyage",
-                "transport","hotel","budget","statut","note"],
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADAPTATEUR DE BASE DE DONNÉES  (SQLite · PostgreSQL · MySQL)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class DBAdapter:
+    """
+    Abstraction légère autour d'une connexion DB.
+    Gère l'adaptation des placeholders ? → %s (PostgreSQL / MySQL)
+    et offre une interface read_sql unifiée.
+    """
+    PLACEHOLDER = {"sqlite": "?", "postgresql": "%s", "mysql": "%s"}
+
+    def __init__(self, db_type: str, conn, label: str = ""):
+        self.db_type = db_type
+        self.conn    = conn
+        self.label   = label or db_type
+
+    def adapt_sql(self, sql: str) -> str:
+        if self.db_type != "sqlite":
+            return sql.replace("?", "%s")
+        return sql
+
+    def read_sql(self, sql: str, params=None) -> "pd.DataFrame":
+        return pd.read_sql_query(self.adapt_sql(sql), self.conn,
+                                 params=params or [])
+
+    def execute(self, sql: str, params=None):
+        cur = self.conn.cursor()
+        cur.execute(self.adapt_sql(sql), params or [])
+        self.conn.commit()
+        return cur
+
+
+def _get_db() -> DBAdapter:
+    """Retourne l'adaptateur actif (connexion réelle ou démo SQLite)."""
+    adapter = st.session_state.get("_db_adapter")
+    if adapter:
+        return adapter
+    return DBAdapter("sqlite", get_connection(), "Démo SQLite")
+
+
+# ── Connexion depuis une config dict ──────────────────────────────────────────
+def connect_db(cfg: dict) -> DBAdapter:
+    """
+    Crée un DBAdapter depuis un dictionnaire de config.
+    cfg["type"] : "sqlite" | "postgresql" | "mysql"
+
+    SQLite  : {"type": "sqlite", "path": "./ma_base.db"}
+    PostgreSQL : {"type": "postgresql", "host": ..., "port": ...,
+                  "database": ..., "user": ..., "password": ...}
+    MySQL   : {"type": "mysql",      "host": ..., "port": ...,
+                  "database": ..., "user": ..., "password": ...}
+    """
+    db_type = cfg.get("type", "sqlite").lower()
+
+    if db_type == "sqlite":
+        path = cfg.get("path", ":memory:")
+        conn = sqlite3.connect(path, check_same_thread=False)
+        label = f"SQLite · {os.path.basename(path)}"
+
+    elif db_type == "postgresql":
+        try:
+            import psycopg2
+        except ImportError:
+            raise ImportError("pip install psycopg2-binary")
+        conn = psycopg2.connect(
+            host=cfg["host"], port=int(cfg.get("port", 5432)),
+            dbname=cfg["database"], user=cfg["user"], password=cfg["password"],
+        )
+        conn.autocommit = True
+        label = f"PostgreSQL · {cfg['host']}/{cfg['database']}"
+
+    elif db_type == "mysql":
+        try:
+            import mysql.connector
+        except ImportError:
+            raise ImportError("pip install mysql-connector-python")
+        conn = mysql.connector.connect(
+            host=cfg["host"], port=int(cfg.get("port", 3306)),
+            database=cfg["database"], user=cfg["user"], password=cfg["password"],
+        )
+        label = f"MySQL · {cfg['host']}/{cfg['database']}"
+
+    else:
+        raise ValueError(f"Type de DB non supporté : {db_type!r}. Valeurs acceptées : sqlite, postgresql, mysql")
+
+    return DBAdapter(db_type, conn, label)
+
+
+# ── Introspection automatique du schéma ───────────────────────────────────────
+def introspect_schema_from_db(adapter: DBAdapter,
+                               table_filter: "list | None" = None) -> dict:
+    """
+    Découvre automatiquement les tables, colonnes, clés primaires et clés
+    étrangères d'une base de données réelle.
+    Retourne un dict compatible avec le format SCHEMA de config.yaml.
+    """
+    db_type = adapter.db_type
+    conn    = adapter.conn
+    schema  = {}
+
+    if db_type == "sqlite":
+        tables = pd.read_sql_query(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name", conn
+        )["name"].tolist()
+        tables = [t for t in tables if not t.startswith("_")]  # ignore internes
+        if table_filter:
+            tables = [t for t in tables if t in table_filter]
+
+        for t in tables:
+            info    = pd.read_sql_query(f"PRAGMA table_info(\"{t}\")", conn)
+            pk_rows = info[info["pk"] == 1]["name"].tolist()
+            pk      = pk_rows[0] if pk_rows else (info["name"].iloc[0] if len(info) else "id")
+            fk_rows = pd.read_sql_query(f"PRAGMA foreign_key_list(\"{t}\")", conn)
+            fks = [{"col": r["from"], "ref": r["table"], "ref_col": r["to"]}
+                   for _, r in fk_rows.iterrows()]
+            schema[t] = {"columns": info["name"].tolist(), "pk": pk, "fk": fks}
+
+    elif db_type == "postgresql":
+        schema_name = "public"
+        cols = pd.read_sql_query(f"""
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = '{schema_name}'
+            ORDER BY table_name, ordinal_position
+        """, conn)
+        pks = pd.read_sql_query(f"""
+            SELECT kcu.table_name, kcu.column_name
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_name = kcu.constraint_name
+             AND tc.table_schema    = kcu.table_schema
+            WHERE tc.constraint_type = 'PRIMARY KEY'
+              AND tc.table_schema = '{schema_name}'
+        """, conn)
+        fks_raw = pd.read_sql_query(f"""
+            SELECT kcu.table_name, kcu.column_name,
+                   ccu.table_name AS ref_table, ccu.column_name AS ref_col
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu
+              ON tc.constraint_name = kcu.constraint_name
+             AND tc.table_schema    = kcu.table_schema
+            JOIN information_schema.constraint_column_usage ccu
+              ON ccu.constraint_name = tc.constraint_name
+             AND ccu.table_schema    = tc.table_schema
+            WHERE tc.constraint_type = 'FOREIGN KEY'
+              AND tc.table_schema = '{schema_name}'
+        """, conn)
+        pk_map = dict(zip(pks["table_name"], pks["column_name"]))
+        fk_map: dict = {}
+        for _, r in fks_raw.iterrows():
+            fk_map.setdefault(r["table_name"], []).append(
+                {"col": r["column_name"], "ref": r["ref_table"], "ref_col": r["ref_col"]})
+
+        for tbl, grp in cols.groupby("table_name"):
+            if table_filter and tbl not in table_filter:
+                continue
+            schema[tbl] = {
+                "columns": grp["column_name"].tolist(),
+                "pk":      pk_map.get(tbl, grp["column_name"].iloc[0]),
+                "fk":      fk_map.get(tbl, []),
+            }
+
+    elif db_type == "mysql":
+        db_name = conn.database
+        cols = pd.read_sql_query(f"""
+            SELECT TABLE_NAME, COLUMN_NAME
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = '{db_name}'
+            ORDER BY TABLE_NAME, ORDINAL_POSITION
+        """, conn)
+        pks = pd.read_sql_query(f"""
+            SELECT TABLE_NAME, COLUMN_NAME
+            FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = '{db_name}'
+              AND CONSTRAINT_NAME = 'PRIMARY'
+        """, conn)
+        fks_raw = pd.read_sql_query(f"""
+            SELECT TABLE_NAME, COLUMN_NAME,
+                   REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME
+            FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = '{db_name}'
+              AND REFERENCED_TABLE_NAME IS NOT NULL
+        """, conn)
+        pk_map = dict(zip(pks["TABLE_NAME"], pks["COLUMN_NAME"]))
+        fk_map: dict = {}
+        for _, r in fks_raw.iterrows():
+            fk_map.setdefault(r["TABLE_NAME"], []).append({
+                "col": r["COLUMN_NAME"],
+                "ref": r["REFERENCED_TABLE_NAME"],
+                "ref_col": r["REFERENCED_COLUMN_NAME"],
+            })
+        for tbl, grp in cols.groupby("TABLE_NAME"):
+            if table_filter and tbl not in table_filter:
+                continue
+            schema[tbl] = {
+                "columns": grp["COLUMN_NAME"].tolist(),
+                "pk":      pk_map.get(tbl, grp["COLUMN_NAME"].iloc[0]),
+                "fk":      fk_map.get(tbl, []),
+            }
+
+    return schema
+
+
+# ── Page de connexion ─────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+# MODULE CARTE  —  visualisation géographique des voyages
+# ══════════════════════════════════════════════════════════════════════════════
+
+CONT_COLORS: dict[str, str] = {
+    "Asie": "#f59e0b", "Europe": "#3b82f6", "Amérique": "#10b981",
+    "Afrique": "#ef4444", "Océanie": "#8b5cf6",
+}
+TYPE_COLORS: dict[str, str] = {
+    "Tourisme": "#3b82f6", "Affaires": "#8b5cf6", "Détente": "#10b981",
+    "Lune de miel": "#f472b6", "Safari": "#f59e0b", "Aventure": "#ef4444",
+    "Luxe": "#fbbf24", "City Break": "#06b6d4", "Culturel": "#a78bfa",
+    "Plage": "#22d3ee", "Romantique": "#fb7185",
 }
 
-# Foreign key relationship between the two tables
-# Each entry: local_pk used in the subquery WHERE, join condition
-ENRICH = {
-    "clients": {
-        "other":       "voyages",
-        "label":       "voyages",
-        # Subquery to count: voyages that match clients in current result
-        "count_sql":   "SELECT COUNT(*) AS total FROM voyages v WHERE v.client_id IN (SELECT id FROM clients WHERE {where})",
-        # Enriched SELECT: clients cols + voyage cols (aliased to avoid conflict on id/statut)
-        "select_sql":  """
-            SELECT
-                c.id, c.nom, c.prenom, c.email, c.telephone, c.ville, c.pays,
-                c.date_inscription, c.statut,
-                v.id          AS voyage_id,
-                v.destination, v.pays_destination, v.continent,
-                v.date_depart, v.date_retour, v.duree_jours, v.type_voyage,
-                v.transport, v.hotel, v.budget,
-                v.statut      AS statut_voyage,
-                v.note
+COUNTRY_ISO_MAP: dict[str, str] = {
+    "Afghanistan": "AFG", "Afrique du Sud": "ZAF", "Albanie": "ALB",
+    "Algérie": "DZA", "Allemagne": "DEU", "Andorre": "AND",
+    "Angola": "AGO", "Arabie Saoudite": "SAU", "Argentine": "ARG",
+    "Arménie": "ARM", "Australie": "AUS", "Autriche": "AUT",
+    "Azerbaïdjan": "AZE", "Bahamas": "BHS", "Bahreïn": "BHR",
+    "Bangladesh": "BGD", "Belgique": "BEL", "Bénin": "BEN",
+    "Birmanie": "MMR", "Bolivie": "BOL", "Bosnie": "BIH",
+    "Brésil": "BRA", "Bulgarie": "BGR", "Cambodge": "KHM",
+    "Cameroun": "CMR", "Canada": "CAN", "Chili": "CHL",
+    "Chine": "CHN", "Chypre": "CYP", "Colombie": "COL",
+    "Congo": "COD", "Corée du Nord": "PRK", "Corée du Sud": "KOR",
+    "Costa Rica": "CRI", "Côte d'Ivoire": "CIV", "Croatie": "HRV",
+    "Cuba": "CUB", "Danemark": "DNK", "Égypte": "EGY",
+    "Émirats Arabes Unis": "ARE", "Équateur": "ECU", "Espagne": "ESP",
+    "Estonie": "EST", "États-Unis": "USA", "Éthiopie": "ETH",
+    "Finlande": "FIN", "France": "FRA", "Géorgie": "GEO",
+    "Ghana": "GHA", "Grèce": "GRC", "Guatemala": "GTM",
+    "Honduras": "HND", "Hongrie": "HUN", "Inde": "IND",
+    "Indonésie": "IDN", "Irak": "IRQ", "Iran": "IRN",
+    "Irlande": "IRL", "Islande": "ISL", "Israël": "ISR",
+    "Italie": "ITA", "Jamaïque": "JAM", "Japon": "JPN",
+    "Jordanie": "JOR", "Kazakhstan": "KAZ", "Kenya": "KEN",
+    "Koweït": "KWT", "Liban": "LBN", "Libye": "LBY",
+    "Lituanie": "LTU", "Luxembourg": "LUX", "Maldives": "MDV",
+    "Mali": "MLI", "Malaisie": "MYS", "Malte": "MLT",
+    "Maroc": "MAR", "Mexique": "MEX", "Monaco": "MCO",
+    "Mongolie": "MNG", "Monténégro": "MNE", "Mozambique": "MOZ",
+    "Népal": "NPL", "Nicaragua": "NIC", "Niger": "NER",
+    "Nigéria": "NGA", "Norvège": "NOR", "Nouvelle-Zélande": "NZL",
+    "Oman": "OMN", "Ouganda": "UGA", "Ouzbékistan": "UZB",
+    "Pakistan": "PAK", "Panama": "PAN", "Paraguay": "PRY",
+    "Pays-Bas": "NLD", "Pérou": "PER", "Philippines": "PHL",
+    "Pologne": "POL", "Portugal": "PRT", "Qatar": "QAT",
+    "République dominicaine": "DOM", "République tchèque": "CZE",
+    "Tchéquie": "CZE", "Roumanie": "ROU", "Royaume-Uni": "GBR",
+    "Russie": "RUS", "Rwanda": "RWA", "Salvador": "SLV",
+    "Sénégal": "SEN", "Serbie": "SRB", "Singapour": "SGP",
+    "Slovaquie": "SVK", "Slovénie": "SVN", "Somalie": "SOM",
+    "Soudan": "SDN", "Sri Lanka": "LKA", "Suède": "SWE",
+    "Suisse": "CHE", "Syrie": "SYR", "Taïwan": "TWN",
+    "Tanzanie": "TZA", "Thaïlande": "THA", "Tunisie": "TUN",
+    "Turquie": "TUR", "Ukraine": "UKR", "Uruguay": "URY",
+    "Venezuela": "VEN", "Vietnam": "VNM", "Yémen": "YEM",
+    "Zambie": "ZMB", "Zimbabwe": "ZWE",
+}
+
+_MAP_BG   = "#0d0f14"
+_MAP_LAND = "#13151d"
+_MAP_SEA  = "#0a0c12"
+_MAP_LINE = "#1e2130"
+
+
+def _map_geo_layout(fig, height: int = 460) -> "go.Figure":
+    """Applique le thème sombre aux figures Plotly geo."""
+    fig.update_layout(
+        paper_bgcolor=_MAP_BG, plot_bgcolor=_MAP_BG,
+        font=dict(color="#e8eaf0"),
+        margin=dict(l=0, r=0, t=0, b=0), height=height,
+        coloraxis_showscale=False,
+        geo=dict(
+            bgcolor=_MAP_BG, showframe=False,
+            showcoastlines=True, coastlinecolor="#2a2d3e",
+            showland=True,    landcolor=_MAP_LAND,
+            showocean=True,   oceancolor=_MAP_SEA,
+            showlakes=True,   lakecolor=_MAP_SEA,
+            showcountries=True, countrycolor=_MAP_LINE,
+            projection_type="natural earth",
+        ),
+    )
+    return fig
+
+
+def _choropleth(df, color_col, hover_name, hover_data, color_scale,
+                custom_data=None, highlight_iso=None, height=460):
+    """Construit un choropleth Plotly avec thème sombre + pays surligné optionnel."""
+    import plotly.express as px
+    import plotly.graph_objects as go
+
+    fig = px.choropleth(
+        df, locations="iso_alpha", color=color_col,
+        hover_name=hover_name, hover_data=hover_data,
+        color_continuous_scale=color_scale,
+        range_color=[0, max(df[color_col].max(), 1)],
+        custom_data=custom_data or [],
+    )
+    if highlight_iso:
+        fig.add_trace(go.Choropleth(
+            locations=[highlight_iso], z=[1],
+            colorscale=[[0, "#6366f1"], [1, "#6366f1"]],
+            showscale=False, hoverinfo="skip",
+            marker_line_color="#a78bfa", marker_line_width=2.5,
+        ))
+    return _map_geo_layout(fig, height)
+
+
+def _read_map_click(event) -> "str | None":
+    """Extrait le nom de pays cliqué depuis un event st.plotly_chart."""
+    sel = getattr(event, "selection", None)
+    pts = getattr(sel, "points", None) or (sel or {}).get("points", [])
+    if not pts:
+        return None
+    raw = pts[0].get("customdata") or []
+    return (raw[0] if isinstance(raw, (list, tuple)) and raw else raw) or None
+
+
+def render_map_module() -> None:
+    """
+    Module carte principale.
+    • Vue monde    : choropleth nb voyages par pays
+    • Vue pays     : clients ayant visité ce pays (clic → vue client)
+    • Vue client   : tous les pays visités par ce client
+    """
+    import plotly.express as px
+
+    db  = _get_db()
+    nav = st.session_state
+
+    selected_country = nav.get("map_country")
+    selected_cid     = nav.get("map_client_id")
+    selected_cname   = nav.get("map_client_name", "")
+
+    # ── Fil d'Ariane ──────────────────────────────────────────────────────────
+    if selected_cid or selected_country:
+        back_cols = st.columns([2, 10])
+        with back_cols[0]:
+            if selected_cid:
+                label = f"← {selected_country}" if selected_country else "← Carte"
+                if st.button(label, key="map_back", use_container_width=True):
+                    nav.pop("map_client_id",   None)
+                    nav.pop("map_client_name", None)
+                    st.rerun()
+            else:
+                if st.button("← Carte mondiale", key="map_back", use_container_width=True):
+                    nav.pop("map_country", None)
+                    st.rerun()
+
+    # ── Données globales ──────────────────────────────────────────────────────
+    try:
+        cdf = db.read_sql("""
+            SELECT pays_destination,
+                   COUNT(*)                    AS nb_voyages,
+                   COUNT(DISTINCT client_id)   AS nb_clients,
+                   ROUND(AVG(budget),  0)      AS budget_moyen,
+                   ROUND(SUM(budget),  0)      AS total_budget
+            FROM voyages
+            GROUP BY pays_destination
+            ORDER BY nb_voyages DESC
+        """)
+    except Exception:
+        st.error("La table `voyages` est introuvable dans la base connectée.")
+        return
+
+    if cdf.empty:
+        st.info("Aucune donnée de voyage disponible.")
+        return
+
+    cdf["iso_alpha"] = cdf["pays_destination"].map(COUNTRY_ISO_MAP)
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # VUE CLIENT — carte personnelle
+    # ════════════════════════════════════════════════════════════════════════════
+    if selected_cid:
+        try:
+            trips = db.read_sql("""
+                SELECT v.pays_destination, v.destination, v.continent,
+                       v.date_depart, v.date_retour, v.duree_jours,
+                       v.budget, v.note, v.type_voyage, v.statut
+                FROM voyages v
+                WHERE v.client_id = ?
+                ORDER BY v.date_depart DESC
+            """, [selected_cid])
+        except Exception:
+            st.error("Impossible de récupérer les voyages de ce client.")
+            return
+
+        if trips.empty:
+            st.info("Aucun voyage pour ce client.")
+            return
+
+        pers = (trips.groupby("pays_destination")
+                     .agg(nb_voyages=("pays_destination", "count"),
+                          total_budget=("budget", "sum"))
+                     .reset_index())
+        pers["iso_alpha"] = pers["pays_destination"].map(COUNTRY_ISO_MAP)
+
+        n_pays     = pers["pays_destination"].nunique()
+        total_bgt  = int(trips["budget"].sum())
+        n_trips    = len(trips)
+
+        st.markdown(
+            f"<h2 style='margin-bottom:.15rem;'>🧳 {selected_cname}</h2>"
+            f"<p style='color:#64748b;margin-bottom:1rem;font-size:.88rem;'>"
+            f"{n_trips} voyage(s) · {n_pays} pays · {total_bgt:,} €</p>",
+            unsafe_allow_html=True)
+
+        fig_c = _choropleth(
+            pers, "total_budget", "pays_destination",
+            {"iso_alpha": False, "nb_voyages": "Voyages",
+             "total_budget": "Budget total (€)"},
+            [[0, "#172554"], [0.4, "#7c3aed"], [1, "#a78bfa"]],
+            custom_data=["pays_destination"], height=400,
+        )
+        st.plotly_chart(fig_c, use_container_width=True, key="client_map")
+
+        # Destination list
+        CONT = {"Asie": "#f59e0b", "Europe": "#3b82f6", "Amérique": "#10b981",
+                "Afrique": "#ef4444", "Océanie": "#8b5cf6"}
+        st.markdown("<div style='margin-top:12px'></div>", unsafe_allow_html=True)
+        for _, r in trips.iterrows():
+            note_v  = r.get("note")
+            stars   = "⭐" * int(note_v) if note_v and pd.notna(note_v) else "—"
+            sc      = "#4ade80" if r.get("statut") == "terminé" else "#fbbf24"
+            cc      = CONT.get(r.get("continent", ""), "#6b7280")
+            st.markdown(
+                f"<div style='background:#13151d;border:1px solid #1e2130;"
+                f"border-left:3px solid {cc};"
+                f"border-radius:10px;padding:10px 16px;margin-bottom:7px;"
+                f"display:flex;align-items:center;gap:12px;'>"
+                f"<div style='flex:1;'>"
+                f"<span style='font-weight:600;color:#e8eaf0;'>{r['destination']}</span>"
+                f"<span style='color:#475569;font-size:.8rem;margin-left:8px;'>"
+                f"{r['pays_destination']} · {str(r['date_depart'])[:10]}"
+                f"{'  ·  ' + str(r['duree_jours']) + 'j' if r.get('duree_jours') else ''}"
+                f"</span></div>"
+                f"<span style='color:#4ade80;font-family:JetBrains Mono,monospace;"
+                f"font-size:.82rem;'>{int(r['budget']):,}€</span>"
+                f"<span style='color:{sc};font-size:.75rem;margin-left:10px;'>{r['statut']}</span>"
+                f"<span style='font-size:.78rem;margin-left:8px;'>{stars}</span>"
+                f"</div>",
+                unsafe_allow_html=True)
+        return
+
+    # ════════════════════════════════════════════════════════════════════════════
+    # VUE MONDE / VUE PAYS
+    # ════════════════════════════════════════════════════════════════════════════
+
+    # Métriques globales
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    mc1.metric("Pays visités",  int(cdf["pays_destination"].nunique()))
+    mc2.metric("Total voyages", int(cdf["nb_voyages"].sum()))
+    mc3.metric("Budget total",  f"{int(cdf['total_budget'].sum()):,}€")
+    mc4.metric("Budget moyen",  f"{int(cdf['budget_moyen'].mean()):,}€")
+
+    # Carte monde
+    hi_iso = None
+    if selected_country:
+        row_hi = cdf[cdf["pays_destination"] == selected_country]
+        if not row_hi.empty and pd.notna(row_hi.iloc[0].get("iso_alpha")):
+            hi_iso = row_hi.iloc[0]["iso_alpha"]
+
+    fig_w = _choropleth(
+        cdf, "nb_voyages", "pays_destination",
+        {"iso_alpha": False, "nb_voyages": "Voyages",
+         "nb_clients": "Clients", "budget_moyen": "Budget moyen (€)"},
+        [[0, "#172554"], [0.25, "#1d4ed8"], [0.6, "#3b82f6"], [1, "#93c5fd"]],
+        custom_data=["pays_destination"], highlight_iso=hi_iso,
+    )
+    event_w = st.plotly_chart(fig_w, on_select="rerun",
+                              key="world_map", use_container_width=True)
+
+    # Lecture du clic carte
+    clicked = _read_map_click(event_w)
+    if clicked and clicked != selected_country:
+        nav["map_country"] = clicked
+        st.rerun()
+
+    # Sélecteur texte (fallback + accessibilité)
+    all_countries = [""] + sorted(cdf["pays_destination"].tolist())
+    idx = all_countries.index(selected_country) if selected_country in all_countries else 0
+    chosen = st.selectbox(
+        "Ou sélectionnez un pays :", all_countries, index=idx,
+        key="map_country_sel",
+        format_func=lambda x: x or "— cliquer sur la carte ou choisir ici —",
+    )
+    if chosen != selected_country:
+        nav["map_country"] = chosen or None
+        st.rerun()
+
+    if not selected_country:
+        st.markdown(
+            "<p style='color:#334155;font-style:italic;font-size:.85rem;"
+            "text-align:center;margin-top:20px;padding-bottom:4rem;'>"
+            "Cliquez sur un pays pour explorer ses statistiques.</p>",
+            unsafe_allow_html=True)
+        return
+
+    # ── Statistiques du pays sélectionné ──────────────────────────────────────
+    r = cdf[cdf["pays_destination"] == selected_country]
+    if r.empty:
+        return
+    r = r.iloc[0]
+
+    st.markdown(
+        f"<h3 style='margin:20px 0 4px;'>📍 {selected_country}</h3>",
+        unsafe_allow_html=True)
+    ps1, ps2, ps3, ps4 = st.columns(4)
+    ps1.metric("Voyages",      int(r["nb_voyages"]))
+    ps2.metric("Clients",      int(r["nb_clients"]))
+    ps3.metric("Budget moyen", f"{int(r['budget_moyen']):,}€")
+    ps4.metric("Budget total", f"{int(r['total_budget']):,}€")
+
+    # Clients ayant visité ce pays
+    try:
+        clients_c = db.read_sql("""
+            SELECT c.id, c.nom, c.prenom, c.ville, c.statut,
+                   COUNT(v.id)         AS nb_voyages,
+                   ROUND(SUM(v.budget),0) AS total_budget
             FROM clients c
             JOIN voyages v ON c.id = v.client_id
-            WHERE c.id IN (SELECT id FROM clients WHERE {where})
-        """,
-    },
-    "voyages": {
-        "other":       "clients",
-        "label":       "clients",
-        "count_sql":   "SELECT COUNT(*) AS total FROM clients c WHERE c.id IN (SELECT client_id FROM voyages WHERE {where})",
-        "select_sql":  """
-            SELECT
-                v.id, v.client_id, v.destination, v.pays_destination, v.continent,
-                v.date_depart, v.date_retour, v.duree_jours, v.type_voyage,
-                v.transport, v.hotel, v.budget, v.statut, v.note,
-                c.nom         AS client_nom,
-                c.prenom      AS client_prenom,
-                c.email       AS client_email,
-                c.telephone   AS client_telephone,
-                c.ville       AS client_ville,
-                c.pays        AS client_pays,
-                c.date_inscription AS client_date_inscription,
-                c.statut      AS client_statut
-            FROM voyages v
-            JOIN clients c ON v.client_id = c.id
-            WHERE v.id IN (SELECT id FROM voyages WHERE {where})
-        """,
-    },
+            WHERE v.pays_destination = ?
+            GROUP BY c.id
+            ORDER BY nb_voyages DESC, total_budget DESC
+        """, [selected_country])
+    except Exception:
+        return
+
+    st.markdown(
+        f"<div style='color:#94a3b8;font-size:.75rem;text-transform:uppercase;"
+        f"letter-spacing:1px;font-family:JetBrains Mono,monospace;margin:18px 0 10px;'>"
+        f"Clients ayant visité {selected_country}</div>",
+        unsafe_allow_html=True)
+
+    for _, cl in clients_c.iterrows():
+        sc     = "#4ade80" if cl.get("statut") == "actif" else "#f87171"
+        ini    = (str(cl.get("nom","?"))[:1] + str(cl.get("prenom","?"))[:1]).upper()
+        cc, cb = st.columns([8, 2])
+        with cc:
+            st.markdown(
+                f"<div style='background:#13151d;border:1px solid #1e2130;"
+                f"border-radius:10px;padding:10px 16px;"
+                f"display:flex;align-items:center;gap:12px;'>"
+                f"<div style='width:34px;height:34px;border-radius:50%;"
+                f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
+                f"display:flex;align-items:center;justify-content:center;"
+                f"font-weight:700;font-size:.82rem;color:white;flex-shrink:0;'>{ini}</div>"
+                f"<div style='flex:1;'>"
+                f"<span style='font-weight:600;color:#e8eaf0;'>"
+                f"{cl.get('prenom','')} {cl.get('nom','')}</span>"
+                f"<span style='color:#64748b;font-size:.78rem;margin-left:8px;'>"
+                f"{cl.get('ville','')} · "
+                f"<span style='color:{sc};'>{cl.get('statut','')}</span></span></div>"
+                f"<span style='font-family:JetBrains Mono,monospace;font-size:.8rem;"
+                f"color:#4ade80;'>{int(cl['total_budget']):,}€</span>"
+                f"<span style='font-size:.72rem;color:#475569;margin-left:8px;'>"
+                f"{int(cl['nb_voyages'])} voyage(s)</span>"
+                f"</div>",
+                unsafe_allow_html=True)
+        with cb:
+            if st.button("Voir ses voyages →",
+                         key=f"map_client_{cl['id']}",
+                         use_container_width=True):
+                nav["map_client_id"]   = int(cl["id"])
+                nav["map_client_name"] = f"{cl.get('prenom','')} {cl.get('nom','')}".strip()
+                st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODULE RAPPORT  —  génération Word (.docx) et PDF après une recherche
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _report_data(df, conditions, current_table, joins, last_where: str) -> dict:
+    """Consolide les informations nécessaires au rapport."""
+    from datetime import datetime as _dt
+    cond_texts = []
+    for c in conditions:
+        op = OP_NATURAL.get(c.get("operator", ""), c.get("operator", ""))
+        if c.get("is_bulk"):
+            vals = ", ".join(c["values"][:5])
+            sfx  = f" +{len(c['values'])-5} autres" if len(c["values"]) > 5 else ""
+            cond_texts.append(f"{c['column']} {op} [{vals}{sfx}]")
+        elif c.get("is_date"):
+            cond_texts.append(f"{c['column']} en {_date_label(c['value'])}")
+        else:
+            cond_texts.append(f"{c['column']} {op} «{c['value']}»")
+
+    join_texts = [f"{j['type']} {j['table']} ON {j['on']}" for j in (joins or [])]
+
+    num_cols = df.select_dtypes(include=["number"]).columns.tolist()
+    stats: dict = {}
+    for col in num_cols:
+        s = df[col].dropna()
+        if len(s):
+            stats[col] = {"min": float(s.min()), "max": float(s.max()),
+                          "mean": float(s.mean()), "sum": float(s.sum()),
+                          "count": int(s.count())}
+    return {
+        "title":        "Rapport d'analyse — SQL Query Builder",
+        "generated_at": _dt.now().strftime("%d/%m/%Y à %H:%M"),
+        "table":        current_table,
+        "joins":        join_texts,
+        "conditions":   cond_texts,
+        "df":           df,
+        "n_rows":       len(df),
+        "n_cols":       len(df.columns),
+        "stats":        stats,
+    }
+
+
+def generate_report_pdf(rd: dict, max_rows: int = 500) -> bytes:
+    """Retourne les bytes d'un rapport PDF (reportlab)."""
+    import io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib             import colors
+    from reportlab.lib.styles      import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units       import cm
+    from reportlab.platypus        import (SimpleDocTemplate, Paragraph, Spacer,
+                                           Table, TableStyle, HRFlowable)
+
+    buf = io.BytesIO()
+    W, _H = A4
+    margin  = 2.2 * cm
+    doc     = SimpleDocTemplate(buf, pagesize=A4,
+                                leftMargin=margin, rightMargin=margin,
+                                topMargin=2.5*cm, bottomMargin=2*cm)
+    cw      = W - 2 * margin   # largeur utile
+
+    styles  = getSampleStyleSheet()
+    BLUE    = colors.HexColor("#1d4ed8")
+    LBLUE   = colors.HexColor("#eff6ff")
+    LGRAY   = colors.HexColor("#f8fafc")
+    GRAY    = colors.HexColor("#e2e8f0")
+    DARK    = colors.HexColor("#1e293b")
+    MUTED   = colors.HexColor("#6b7280")
+
+    S_TITLE  = ParagraphStyle("T",  parent=styles["Title"],    fontSize=17, spaceAfter=2,
+                               textColor=colors.HexColor("#0f172a"))
+    S_SUB    = ParagraphStyle("Su", parent=styles["Normal"],   fontSize=9,  spaceAfter=12,
+                               textColor=MUTED)
+    S_H1     = ParagraphStyle("H1", parent=styles["Heading1"], fontSize=11, spaceBefore=14,
+                               spaceAfter=5, textColor=colors.HexColor("#1e3a5f"))
+    S_BODY   = ParagraphStyle("B",  parent=styles["Normal"],   fontSize=9,  leading=14,
+                               spaceAfter=3, textColor=DARK)
+    S_ITALIC = ParagraphStyle("I",  parent=S_BODY, textColor=MUTED)
+
+    def _tbl(data, col_widths, header_bg=BLUE, alt=True):
+        t = Table(data, colWidths=col_widths, repeatRows=1)
+        cmds = [
+            ("FONTNAME",      (0,0), (-1,0),   "Helvetica-Bold"),
+            ("FONTNAME",      (0,1), (-1,-1),  "Helvetica"),
+            ("FONTSIZE",      (0,0), (-1,-1),  8),
+            ("BACKGROUND",    (0,0), (-1,0),   header_bg),
+            ("TEXTCOLOR",     (0,0), (-1,0),   colors.white),
+            ("GRID",          (0,0), (-1,-1),  0.3, GRAY),
+            ("TOPPADDING",    (0,0), (-1,-1),  4),
+            ("BOTTOMPADDING", (0,0), (-1,-1),  4),
+            ("LEFTPADDING",   (0,0), (-1,-1),  5),
+            ("VALIGN",        (0,0), (-1,-1),  "MIDDLE"),
+        ]
+        if alt:
+            for i in range(1, len(data)):
+                bg = LGRAY if i % 2 == 0 else colors.white
+                cmds.append(("BACKGROUND", (0,i), (-1,i), bg))
+        t.setStyle(TableStyle(cmds))
+        return t
+
+    story = []
+    story.append(Paragraph(rd["title"], S_TITLE))
+    story.append(Paragraph(f"Généré le {rd['generated_at']}", S_SUB))
+    story.append(HRFlowable(width="100%", thickness=2, color=BLUE, spaceAfter=12))
+
+    # Paramètres
+    story.append(Paragraph("Paramètres de la requête", S_H1))
+    story.append(Paragraph(f"<b>Table source :</b>  {rd['table']}", S_BODY))
+    for j in rd["joins"]:
+        story.append(Paragraph(f"<b>Jointure :</b>  {j}", S_BODY))
+    if rd["conditions"]:
+        story.append(Spacer(1, 4))
+        story.append(Paragraph("<b>Conditions :</b>", S_BODY))
+        for i, c in enumerate(rd["conditions"], 1):
+            story.append(Paragraph(f" {i}.  {c}", S_BODY))
+    else:
+        story.append(Paragraph("<i>Aucune condition — tous les enregistrements.</i>", S_ITALIC))
+
+    # Résumé
+    story.append(Paragraph("Résumé", S_H1))
+    smry = [["Lignes retournées", str(rd["n_rows"])],
+            ["Colonnes",          str(rd["n_cols"])],
+            ["Table source",      rd["table"]],
+            ["Généré le",         rd["generated_at"]]]
+    story.append(_tbl([["Paramètre", "Valeur"]] + smry,
+                      [cw * 0.4, cw * 0.6], header_bg=LBLUE))
+
+    # Données
+    df2    = rd["df"].head(max_rows)
+    shown  = len(df2)
+    sfx    = f" — {shown} affichées" if shown < rd["n_rows"] else ""
+    story.append(Paragraph(f"Données  ({rd['n_rows']} lignes{sfx})", S_H1))
+    cols   = list(df2.columns)
+    n      = len(cols)
+    cw_col = max(cw / n, 1.5*cm)
+    rows   = [cols]
+    for _, row in df2.iterrows():
+        rows.append([("" if (v is None or str(v) == "nan") else str(v)) for v in row])
+    story.append(_tbl(rows, [cw_col]*n))
+
+    # Statistiques
+    if rd["stats"]:
+        story.append(Paragraph("Statistiques numériques", S_H1))
+        hdr  = ["Colonne", "Min", "Max", "Moyenne", "Somme", "N"]
+        srows = [hdr]
+        for col, s in rd["stats"].items():
+            srows.append([col, f"{s['min']:,.2f}", f"{s['max']:,.2f}",
+                          f"{s['mean']:,.2f}", f"{s['sum']:,.2f}", str(s["count"])])
+        story.append(_tbl(srows, [cw * 0.28] + [cw * 0.72 / 5] * 5,
+                          header_bg=colors.HexColor("#0f172a")))
+
+    # Fiches clients
+    df_full    = rd["df"]
+    has_nom    = "nom"         in df_full.columns
+    has_prenom = "prenom"      in df_full.columns
+    has_dest   = "destination" in df_full.columns
+    _id_col    = _find_col(df_full, "id", "clients_id")
+    _stat_col  = _find_col(df_full, "statut", "clients_statut")
+
+    if has_nom and has_prenom:
+        from reportlab.platypus import KeepTogether
+
+        S_NAME = ParagraphStyle("Name", parent=styles["Normal"],
+                                 fontSize=10, fontName="Helvetica-Bold",
+                                 textColor=colors.HexColor("#0f172a"),
+                                 spaceBefore=10, spaceAfter=2)
+        S_META = ParagraphStyle("Meta", parent=styles["Normal"],
+                                 fontSize=8.5, leading=13,
+                                 textColor=colors.HexColor("#6b7280"), spaceAfter=2)
+        S_VG   = ParagraphStyle("Vg", parent=styles["Normal"],
+                                 fontSize=8.5, leading=14,
+                                 textColor=colors.HexColor("#1e293b"),
+                                 leftIndent=14, spaceAfter=1)
+        S_SEP  = ParagraphStyle("Sep", parent=styles["Normal"],
+                                 fontSize=1, spaceAfter=2)
+
+        story.append(Spacer(1, 10))
+        story.append(HRFlowable(width="100%", thickness=1,
+                                 color=colors.HexColor("#e2e8f0"), spaceAfter=4))
+        story.append(Paragraph("Fiches clients", S_H1))
+
+        CONT_C = {"Asie": "#b45309", "Europe": "#1d4ed8", "Amérique": "#16a34a",
+                  "Afrique": "#dc2626", "Océanie": "#7c3aed"}
+
+        if has_dest and _id_col:
+            for cid, grp in df_full.groupby(_id_col, sort=False):
+                r0      = grp.iloc[0]
+                prenom  = r0.get("prenom", "")
+                nom     = r0.get("nom", "")
+                ville   = r0.get("ville", "")
+                email   = r0.get("email", "")
+                statut  = r0.get(_stat_col) if _stat_col else r0.get("statut", "")
+                s_str   = "actif" if statut == "actif" else "inactif"
+                s_col   = "#16a34a" if statut == "actif" else "#dc2626"
+                n_v     = len(grp)
+
+                block = []
+                block.append(Paragraph(
+                    f"<b>{prenom} {nom}</b>"
+                    f"<font size='8' color='#6b7280'>  ·  {ville}"
+                    f"{'  ·  ' + email if email else ''}</font>"
+                    f"  <font size='8' color='{s_col}'>{s_str}</font>"
+                    f"  <font size='8' color='#6366f1'>{n_v} voyage(s)</font>",
+                    S_NAME))
+
+                for _, vr in grp.iterrows():
+                    dest   = vr.get("destination", "")
+                    pays   = vr.get("pays_destination", "")
+                    cont   = vr.get("continent", "")
+                    d_dep  = str(vr.get("date_depart",  ""))[:10]
+                    d_ret  = str(vr.get("date_retour", ""))[:10]
+                    duree  = vr.get("duree_jours")
+                    tv     = vr.get("type_voyage", "")
+                    budget = vr.get("budget")
+                    note   = vr.get("note")
+                    v_stat = vr.get("statut_voyage", vr.get("statut", ""))
+                    c_col  = CONT_C.get(cont, "#6b7280")
+                    stars  = "\u2605" * int(note) if note and not pd.isna(note) else "\u2014"
+                    bgt    = f"{int(budget):,}\u20ac" if budget and not pd.isna(budget) else "\u2014"
+                    duree_s = f"  \u00b7  {int(duree)}j" if duree and not pd.isna(duree) else ""
+
+                    block.append(Paragraph(
+                        f"<font color='{c_col}'>\u25b8</font>  "
+                        f"<b>{dest}</b>"
+                        f"<font color='#94a3b8'>  {pays}{duree_s}  \u00b7  {d_dep} \u2192 {d_ret}"
+                        f"  \u00b7  {tv}</font>"
+                        f"  <font color='#16a34a'>{bgt}</font>"
+                        f"  <font color='#b45309' size='8'>{stars}</font>",
+                        S_VG))
+
+                block.append(HRFlowable(width="100%", thickness=0.5,
+                                         color=colors.HexColor("#f1f5f9"),
+                                         spaceAfter=2))
+                story.append(KeepTogether(block))
+
+        else:
+            # Clients seuls (sans voyages)
+            for _, r in df_full.iterrows():
+                prenom = r.get("prenom", "")
+                nom    = r.get("nom", "")
+                ville  = r.get("ville", "")
+                email  = r.get("email", "")
+                tel    = r.get("telephone", "")
+                di     = r.get("date_inscription", "")
+                statut = r.get(_stat_col) if _stat_col else r.get("statut", "")
+                s_col  = "#16a34a" if statut == "actif" else "#dc2626"
+
+                story.append(Paragraph(
+                    f"<b>{prenom} {nom}</b>"
+                    f"<font size='8' color='#6b7280'>  \u00b7  {ville}</font>"
+                    f"  <font size='8' color='{s_col}'>{statut}</font>",
+                    S_NAME))
+                meta_parts = []
+                if email: meta_parts.append(email)
+                if tel:   meta_parts.append(tel)
+                if di:    meta_parts.append(f"Membre depuis {str(di)[:10]}")
+                if meta_parts:
+                    story.append(Paragraph("  \u00b7  ".join(meta_parts), S_META))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+def generate_report_docx(rd: dict, max_rows: int = 500) -> bytes:
+    """Retourne les bytes d'un rapport Word (.docx) (python-docx)."""
+    import io
+    from docx             import Document
+    from docx.shared      import Pt, RGBColor, Cm
+    from docx.enum.table  import WD_TABLE_ALIGNMENT
+    from docx.oxml.ns     import qn
+    from docx.oxml        import OxmlElement
+
+    doc = Document()
+    sec = doc.sections[0]
+    sec.page_width = sec.page_height = None   # set below
+    from docx.shared import Cm as _Cm
+    sec.page_width  = _Cm(21)
+    sec.page_height = _Cm(29.7)
+    sec.left_margin = sec.right_margin  = _Cm(2.5)
+    sec.top_margin  = sec.bottom_margin = _Cm(2)
+
+    content_cm = 21 - 5   # 16 cm
+    # Clear default empty paragraph
+    for p in doc.paragraphs:
+        p._element.getparent().remove(p._element)
+
+    def _rgb(hex6):
+        return RGBColor(int(hex6[:2],16), int(hex6[2:4],16), int(hex6[4:],16))
+
+    def _shd(cell, fill_hex):
+        tc  = cell._tc
+        tcPr= tc.get_or_add_tcPr()
+        # Remove existing shd
+        for old in tcPr.findall(qn("w:shd")):
+            tcPr.remove(old)
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"),   "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"),  fill_hex.upper())
+        tcPr.append(shd)
+
+    def _add_heading(text, level=1, color="0f172a"):
+        p = doc.add_paragraph()
+        r = p.add_run(text)
+        r.bold = True
+        r.font.size = Pt(14 if level == 1 else 11)
+        r.font.color.rgb = _rgb(color)
+        p.paragraph_format.space_before = Pt(14 if level == 1 else 8)
+        p.paragraph_format.space_after  = Pt(5)
+        return p
+
+    def _add_kv(key, val):
+        p = doc.add_paragraph()
+        rk = p.add_run(f"{key} : "); rk.bold = True; rk.font.size = Pt(9)
+        rv = p.add_run(str(val));    rv.font.size = Pt(9)
+        p.paragraph_format.space_after = Pt(2)
+
+    def _hr():
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after  = Pt(8)
+        pPr  = p._p.get_or_add_pPr()
+        pBdr = OxmlElement("w:pBdr")
+        btm  = OxmlElement("w:bottom")
+        btm.set(qn("w:val"),  "single")
+        btm.set(qn("w:sz"),   "12")
+        btm.set(qn("w:space"),"1")
+        btm.set(qn("w:color"),"1D4ED8")
+        pBdr.append(btm)
+        pPr.append(pBdr)
+
+    def _tbl_docx(header_row, data_rows, col_widths_cm,
+                  hdr_fill="1D4ED8", hdr_text="FFFFFF"):
+        n   = len(header_row)
+        t   = doc.add_table(rows=1, cols=n)
+        t.style = "Table Grid"
+        t.alignment = WD_TABLE_ALIGNMENT.LEFT
+        hcells = t.rows[0].cells
+        for i, h in enumerate(header_row):
+            hcells[i].text = str(h)
+            hcells[i].width = Cm(col_widths_cm[i] if i < len(col_widths_cm) else 2)
+            r2 = hcells[i].paragraphs[0].runs[0]
+            r2.bold = True; r2.font.size = Pt(8)
+            r2.font.color.rgb = _rgb(hdr_text)
+            _shd(hcells[i], hdr_fill)
+        for ri, row in enumerate(data_rows):
+            cells = t.add_row().cells
+            fill  = "F8FAFC" if ri % 2 == 0 else "FFFFFF"
+            for i, v in enumerate(row):
+                cells[i].text  = str(v)
+                cells[i].width = Cm(col_widths_cm[i] if i < len(col_widths_cm) else 2)
+                for rx in cells[i].paragraphs[0].runs:
+                    rx.font.size = Pt(8)
+                _shd(cells[i], fill)
+        return t
+
+    # ── Titre ────────────────────────────────────────────────────────────────
+    p = doc.add_paragraph()
+    r = p.add_run(rd["title"])
+    r.bold = True; r.font.size = Pt(17); r.font.color.rgb = _rgb("0f172a")
+    p.paragraph_format.space_after = Pt(2)
+
+    p2 = doc.add_paragraph(f"Généré le {rd['generated_at']}")
+    p2.runs[0].font.size = Pt(9); p2.runs[0].font.color.rgb = _rgb("6b7280")
+    p2.paragraph_format.space_after = Pt(4)
+    _hr()
+
+    # ── Paramètres ───────────────────────────────────────────────────────────
+    _add_heading("Paramètres de la requête")
+    _add_kv("Table source", rd["table"])
+    for j in rd["joins"]:
+        _add_kv("Jointure", j)
+    if rd["conditions"]:
+        p_h = doc.add_paragraph()
+        rh  = p_h.add_run("Conditions :"); rh.bold = True; rh.font.size = Pt(9)
+        p_h.paragraph_format.space_after = Pt(2)
+        for i, c in enumerate(rd["conditions"], 1):
+            pb = doc.add_paragraph(f"  {i}.  {c}", style="List Bullet")
+            pb.paragraph_format.space_after = Pt(1)
+            for rx in pb.runs: rx.font.size = Pt(9)
+    else:
+        p_nc = doc.add_paragraph("Aucune condition — tous les enregistrements.")
+        p_nc.runs[0].italic = True; p_nc.runs[0].font.size = Pt(9)
+
+    # ── Résumé ───────────────────────────────────────────────────────────────
+    _add_heading("Résumé")
+    smry = [["Lignes retournées", str(rd["n_rows"])],
+            ["Colonnes",          str(rd["n_cols"])],
+            ["Table source",      rd["table"]],
+            ["Généré le",         rd["generated_at"]]]
+    _tbl_docx(["Paramètre", "Valeur"], smry,
+              [content_cm * 0.4, content_cm * 0.6],
+              hdr_fill="DBEAFE", hdr_text="1E3A5F")
+
+    # ── Données ──────────────────────────────────────────────────────────────
+    df2   = rd["df"].head(max_rows)
+    shown = len(df2)
+    sfx   = f" — {shown} affichées" if shown < rd["n_rows"] else ""
+    _add_heading(f"Données  ({rd['n_rows']} lignes{sfx})")
+    cols  = list(df2.columns)
+    n     = len(cols)
+    cw    = max(content_cm / n, 1.5)
+    rows  = [["" if (v is None or str(v) == "nan") else str(v) for v in row]
+             for _, row in df2.iterrows()]
+    _tbl_docx(cols, rows, [cw]*n)
+
+    # ── Statistiques ─────────────────────────────────────────────────────────
+    if rd["stats"]:
+        _add_heading("Statistiques numériques")
+        hdr   = ["Colonne", "Min", "Max", "Moyenne", "Somme", "N"]
+        sdata = [[c, f"{s['min']:,.2f}", f"{s['max']:,.2f}",
+                  f"{s['mean']:,.2f}", f"{s['sum']:,.2f}", str(s["count"])]
+                 for c, s in rd["stats"].items()]
+        wcols = [content_cm * 0.28] + [content_cm * 0.72 / 5] * 5
+        _tbl_docx(hdr, sdata, wcols, hdr_fill="0F172A")
+
+    # ── Fiches clients ────────────────────────────────────────────────────────
+    df_full    = rd["df"]
+    has_nom    = "nom"         in df_full.columns
+    has_prenom = "prenom"      in df_full.columns
+    has_dest   = "destination" in df_full.columns
+    _id_col    = _find_col(df_full, "id", "clients_id")
+    _stat_col  = _find_col(df_full, "statut", "clients_statut")
+
+    if has_nom and has_prenom:
+        # Séparateur
+        p_hr = doc.add_paragraph()
+        p_hr.paragraph_format.space_before = Pt(10)
+        p_hr.paragraph_format.space_after  = Pt(4)
+        pPr2 = p_hr._p.get_or_add_pPr()
+        pBdr2= OxmlElement("w:pBdr")
+        btm2 = OxmlElement("w:bottom")
+        btm2.set(qn("w:val"),   "single")
+        btm2.set(qn("w:sz"),    "4")
+        btm2.set(qn("w:space"), "1")
+        btm2.set(qn("w:color"), "E2E8F0")
+        pBdr2.append(btm2)
+        pPr2.append(pBdr2)
+        _add_heading("Fiches clients")
+
+        CONT_C = {"Asie": "B45309", "Europe": "1D4ED8", "Amérique": "16A34A",
+                  "Afrique": "DC2626", "Océanie": "7C3AED"}
+
+        def _run(para, text, size=9, bold=False, color="1e293b", italic=False):
+            r = para.add_run(text)
+            r.bold   = bold
+            r.italic = italic
+            r.font.size      = Pt(size)
+            r.font.color.rgb = _rgb(color.lstrip("#"))
+            return r
+
+        if has_dest and _id_col:
+            for cid, grp in df_full.groupby(_id_col, sort=False):
+                r0     = grp.iloc[0]
+                prenom = r0.get("prenom", "")
+                nom    = r0.get("nom",    "")
+                ville  = r0.get("ville",  "")
+                email  = r0.get("email",  "")
+                statut = r0.get(_stat_col) if _stat_col else r0.get("statut", "")
+                s_col  = "16A34A" if statut == "actif" else "DC2626"
+                n_v    = len(grp)
+
+                # Entête client
+                ph = doc.add_paragraph()
+                ph.paragraph_format.space_before = Pt(10)
+                ph.paragraph_format.space_after  = Pt(2)
+                _run(ph, f"{prenom} {nom}", size=10, bold=True, color="0f172a")
+                _run(ph, f"   {ville}", size=8.5, color="6b7280")
+                if email:
+                    _run(ph, f"  ·  {email}", size=8.5, color="6b7280")
+                _run(ph, f"   {'actif' if statut == 'actif' else 'inactif'}",
+                     size=8.5, color=s_col)
+                _run(ph, f"  ·  {n_v} voyage(s)", size=8.5, color="6366f1")
+
+                # Voyages
+                for _, vr in grp.iterrows():
+                    dest   = vr.get("destination", "")
+                    pays   = vr.get("pays_destination", "")
+                    cont   = vr.get("continent", "")
+                    d_dep  = str(vr.get("date_depart",  ""))[:10]
+                    d_ret  = str(vr.get("date_retour", ""))[:10]
+                    duree  = vr.get("duree_jours")
+                    tv     = vr.get("type_voyage", "")
+                    budget = vr.get("budget")
+                    note   = vr.get("note")
+                    c_col  = CONT_C.get(cont, "6b7280")
+                    stars  = "\u2605" * int(note) if note and not pd.isna(note) else "\u2014"
+                    bgt    = f"{int(budget):,}\u20ac" if budget and not pd.isna(budget) else "\u2014"
+                    duree_s = f"  ·  {int(duree)}j" if duree and not pd.isna(duree) else ""
+
+                    pv = doc.add_paragraph()
+                    pv.paragraph_format.space_after  = Pt(1)
+                    pv.paragraph_format.left_indent  = Pt(14)
+                    _run(pv, "\u25b8  ", size=9, color=c_col, bold=True)
+                    _run(pv, dest, size=9, bold=True, color="1e3a5f")
+                    _run(pv, f"   {pays}{duree_s}  ·  {d_dep} \u2192 {d_ret}  ·  {tv}",
+                         size=8, color="94a3b8")
+                    _run(pv, f"   {bgt}", size=9, color="16a34a")
+                    _run(pv, f"  {stars}", size=8, color="b45309")
+
+                # Filet
+                p_sep = doc.add_paragraph()
+                p_sep.paragraph_format.space_before = Pt(4)
+                p_sep.paragraph_format.space_after  = Pt(0)
+                pPr3  = p_sep._p.get_or_add_pPr()
+                pBdr3 = OxmlElement("w:pBdr")
+                b3    = OxmlElement("w:bottom")
+                b3.set(qn("w:val"),   "single")
+                b3.set(qn("w:sz"),    "2")
+                b3.set(qn("w:space"), "1")
+                b3.set(qn("w:color"), "F1F5F9")
+                pBdr3.append(b3)
+                pPr3.append(pBdr3)
+
+        else:
+            # Clients seuls
+            for _, r in df_full.iterrows():
+                prenom = r.get("prenom", "")
+                nom    = r.get("nom",    "")
+                ville  = r.get("ville",  "")
+                email  = r.get("email",  "")
+                tel    = r.get("telephone", "")
+                di     = r.get("date_inscription", "")
+                statut = r.get(_stat_col) if _stat_col else r.get("statut", "")
+                s_col  = "16A34A" if statut == "actif" else "DC2626"
+
+                pc = doc.add_paragraph()
+                pc.paragraph_format.space_before = Pt(8)
+                pc.paragraph_format.space_after  = Pt(2)
+                _run(pc, f"{prenom} {nom}", size=10, bold=True, color="0f172a")
+                _run(pc, f"  ·  {ville}", size=8.5, color="6b7280")
+                _run(pc, f"  ·  {'actif' if statut == 'actif' else 'inactif'}",
+                     size=8.5, color=s_col)
+                meta = []
+                if email: meta.append(email)
+                if tel:   meta.append(tel)
+                if di:    meta.append(f"Membre depuis {str(di)[:10]}")
+                if meta:
+                    pm = doc.add_paragraph("   ·   ".join(meta))
+                    pm.runs[0].font.size = Pt(8.5)
+                    pm.runs[0].font.color.rgb = _rgb("6b7280")
+                    pm.paragraph_format.space_after = Pt(2)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+@st.dialog("📄 Générer un rapport")
+def _rapport_dialog(df, conditions, current_table, joins, last_where):
+    """Boîte de dialogue de configuration et téléchargement du rapport."""
+    st.markdown(
+        f"<p style='color:#94a3b8;font-size:.85rem;'>"
+        f"{len(df)} lignes · {len(df.columns)} colonnes · table <b>{current_table}</b></p>",
+        unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2)
+    fmt     = c1.selectbox("Format", ["PDF", "Word (.docx)"], key="rpt_fmt")
+    max_r   = c2.number_input(
+        "Lignes max.", min_value=1, max_value=len(df),
+        value=min(len(df), 500), step=max(1, min(50, len(df))), key="rpt_maxrows",
+    )
+
+    if st.button("⬇ Générer", type="primary", width="stretch", key="rpt_gen"):
+        with st.spinner("Génération en cours…"):
+            rd = _report_data(df, conditions, current_table, joins, last_where)
+            try:
+                if fmt == "PDF":
+                    data  = generate_report_pdf(rd, max_rows=int(max_r))
+                    fname = f"rapport_{current_table}.pdf"
+                    mime  = "application/pdf"
+                else:
+                    data  = generate_report_docx(rd, max_rows=int(max_r))
+                    fname = f"rapport_{current_table}.docx"
+                    mime  = ("application/vnd.openxmlformats-officedocument"
+                             ".wordprocessingml.document")
+                st.download_button(
+                    f"⬇  Télécharger  {fname}",
+                    data=data, file_name=fname, mime=mime,
+                    key="rpt_dl", use_container_width=True, type="primary",
+                )
+            except ImportError as e:
+                st.error(
+                    f"Bibliothèque manquante : `{e}`\n\n"
+                    f"Ajoutez `{'reportlab' if fmt == 'PDF' else 'python-docx'}` "
+                    f"à votre `requirements.txt` et redémarrez l'app.")
+            except Exception as e:
+                st.error(f"Erreur de génération : {e}")
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODULE PERSONNEL  —  affectations, mutations annuelles, rapport RH
+# ══════════════════════════════════════════════════════════════════════════════
+
+_CONT_COL_P = {
+    "Europe": "#3b82f6", "Asie": "#f59e0b", "Amérique": "#10b981",
+    "Afrique": "#ef4444", "Océanie": "#8b5cf6",
 }
 
+
+def _load_personnel_data(db: "DBAdapter") -> dict:
+    """Charge toutes les données RH nécessaires aux vues et au rapport."""
+    current = db.read_sql("""
+        SELECT e.id, e.nom, e.prenom, e.poste, e.statut, e.date_embauche,
+               a.agence, a.ville, a.pays, a.continent, a.date_debut
+        FROM employes e
+        JOIN affectations a ON e.id = a.employe_id
+        WHERE a.date_fin IS NULL
+        ORDER BY a.continent, a.pays, e.nom
+    """)
+    mutations = db.read_sql("""
+        SELECT
+            e.id AS employe_id, e.nom, e.prenom, e.poste,
+            a_prev.pays       AS pays_depart,
+            a_prev.continent  AS cont_depart,
+            a_prev.agence     AS agence_depart,
+            a_curr.pays       AS pays_arrivee,
+            a_curr.continent  AS cont_arrivee,
+            a_curr.agence     AS agence_arrivee,
+            a_curr.ville      AS ville_arrivee,
+            a_curr.date_debut AS date_mutation,
+            CAST(strftime('%Y', a_curr.date_debut) AS INTEGER) AS annee
+        FROM affectations a_curr
+        JOIN affectations a_prev
+          ON  a_prev.employe_id = a_curr.employe_id
+          AND a_prev.date_fin   = (
+                SELECT MAX(date_fin) FROM affectations
+                WHERE employe_id = a_curr.employe_id
+                  AND date_fin  < a_curr.date_debut
+              )
+        JOIN employes e ON e.id = a_curr.employe_id
+        WHERE a_curr.date_debut >= '2019-01-01'
+        ORDER BY a_curr.date_debut DESC
+    """)
+    all_aff = db.read_sql("""
+        SELECT a.*, e.nom, e.prenom, e.poste, e.statut
+        FROM affectations a
+        JOIN employes e ON e.id = a.employe_id
+        ORDER BY a.date_debut
+    """)
+    return {"current": current, "mutations": mutations, "all_aff": all_aff}
+
+
+def generate_report_mutations_pdf(data: dict, year_from: int, year_to: int) -> bytes:
+    """Rapport PDF annuel des mutations du personnel (reportlab)."""
+    import io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib             import colors
+    from reportlab.lib.styles      import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units       import cm
+    from reportlab.platypus        import (SimpleDocTemplate, Paragraph, Spacer,
+                                            Table, TableStyle, HRFlowable, PageBreak)
+    from datetime import datetime as _dt
+
+    mut   = data["mutations"]
+    cur   = data["current"]
+    buf   = io.BytesIO()
+    W, _H = A4
+    M     = 2.2 * cm
+    doc   = SimpleDocTemplate(buf, pagesize=A4,
+                               leftMargin=M, rightMargin=M,
+                               topMargin=2.5*cm, bottomMargin=2*cm)
+    cw    = W - 2 * M
+
+    styles = getSampleStyleSheet()
+    BLUE   = colors.HexColor("#1d4ed8")
+    LGRAY  = colors.HexColor("#f8fafc")
+    GRAY   = colors.HexColor("#e2e8f0")
+    DARK   = colors.HexColor("#0f172a")
+    MUTED  = colors.HexColor("#6b7280")
+
+    S_TITLE = ParagraphStyle("T",  parent=styles["Title"],   fontSize=17, spaceAfter=2,
+                              textColor=DARK)
+    S_SUB   = ParagraphStyle("Su", parent=styles["Normal"],  fontSize=9,  spaceAfter=12,
+                              textColor=MUTED)
+    S_H1    = ParagraphStyle("H1", parent=styles["Heading1"],fontSize=12, spaceBefore=14,
+                              spaceAfter=6, textColor=colors.HexColor("#1e3a5f"))
+    S_H2    = ParagraphStyle("H2", parent=styles["Heading2"],fontSize=10, spaceBefore=10,
+                              spaceAfter=4, textColor=colors.HexColor("#334155"))
+    S_BODY  = ParagraphStyle("B",  parent=styles["Normal"],  fontSize=9,  leading=14,
+                              spaceAfter=3)
+
+    def _tbl(data, cws, hbg=BLUE):
+        t = Table(data, colWidths=cws, repeatRows=1)
+        cmds = [
+            ("FONTNAME",      (0,0), (-1,0),  "Helvetica-Bold"),
+            ("FONTNAME",      (0,1), (-1,-1), "Helvetica"),
+            ("FONTSIZE",      (0,0), (-1,-1), 8),
+            ("BACKGROUND",    (0,0), (-1,0),  hbg),
+            ("TEXTCOLOR",     (0,0), (-1,0),  colors.white),
+            ("GRID",          (0,0), (-1,-1), 0.3, GRAY),
+            ("TOPPADDING",    (0,0), (-1,-1), 4),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 4),
+            ("LEFTPADDING",   (0,0), (-1,-1), 5),
+        ]
+        for i in range(1, len(data)):
+            cmds.append(("BACKGROUND", (0,i), (-1,i), LGRAY if i%2==0 else colors.white))
+        t.setStyle(TableStyle(cmds))
+        return t
+
+    # Filtrer par période
+    if not mut.empty and "annee" in mut.columns:
+        mut_p = mut[(mut["annee"] >= year_from) & (mut["annee"] <= year_to)].copy()
+    else:
+        mut_p = pd.DataFrame()
+
+    story = []
+
+    # ── Couverture ────────────────────────────────────────────────────────────
+    story.append(Paragraph("Rapport des Mutations du Personnel", S_TITLE))
+    story.append(Paragraph(
+        f"Agence de voyages  ·  Période {year_from}–{year_to}  ·  "
+        f"Généré le {_dt.now().strftime('%d/%m/%Y')}", S_SUB))
+    story.append(HRFlowable(width="100%", thickness=2, color=BLUE, spaceAfter=14))
+
+    # ── Résumé exécutif ───────────────────────────────────────────────────────
+    story.append(Paragraph("Résumé exécutif", S_H1))
+    n_mut      = len(mut_p)
+    n_employes = mut_p["employe_id"].nunique() if not mut_p.empty else 0
+    n_pays_imp = len(set(list(mut_p.get("pays_depart", pd.Series()).unique()) +
+                         list(mut_p.get("pays_arrivee", pd.Series()).unique()))) if not mut_p.empty else 0
+    n_actifs   = len(cur)
+    smry = [["Indicateur", "Valeur"],
+            ["Employés actifs (postes actuels)",   str(n_actifs)],
+            ["Mutations sur la période",           str(n_mut)],
+            ["Employés ayant muté",                str(n_employes)],
+            ["Pays impliqués",                     str(n_pays_imp)],
+            ["Moyenne mutations / an",
+             f"{n_mut / max(year_to - year_from + 1, 1):.1f}"]]
+    story.append(_tbl(smry, [cw*0.55, cw*0.45],
+                       hbg=colors.HexColor("#dbeafe")))
+    story.append(Spacer(1, 8))
+    story.append(Paragraph(
+        f"Sur la période {year_from}–{year_to}, l'agence a enregistré "
+        f"<b>{n_mut} mutation(s)</b> impliquant <b>{n_employes} employé(s)</b> "
+        f"dans <b>{n_pays_imp} pays</b>.", S_BODY))
+
+    # ── Analyse par année ─────────────────────────────────────────────────────
+    story.append(Paragraph("Analyse par année", S_H1))
+    if not mut_p.empty:
+        by_year = (mut_p.groupby("annee")
+                        .agg(nb_mutations=("employe_id", "count"),
+                             nb_employes=("employe_id", "nunique"),
+                             pays_dest=("pays_arrivee", "nunique"))
+                        .reset_index()
+                        .sort_values("annee"))
+        hdr = ["Année", "Mutations", "Employés mutés", "Pays de destination"]
+        rows = [hdr] + [[str(int(r["annee"])), str(r["nb_mutations"]),
+                          str(r["nb_employes"]),   str(r["pays_dest"])]
+                         for _, r in by_year.iterrows()]
+        story.append(_tbl(rows, [cw*0.2, cw*0.25, cw*0.3, cw*0.25]))
+    else:
+        story.append(Paragraph("Aucune mutation sur la période sélectionnée.", S_BODY))
+
+    # ── Top pays d'accueil ────────────────────────────────────────────────────
+    story.append(Paragraph("Pays d'accueil les plus fréquents", S_H1))
+    if not mut_p.empty and "pays_arrivee" in mut_p.columns:
+        top_pays = mut_p["pays_arrivee"].value_counts().head(8)
+        hdr2 = ["Pays d'accueil", "Nb mutations", "Employés"]
+        rows2 = [hdr2]
+        for pays, nb in top_pays.items():
+            emp = mut_p[mut_p["pays_arrivee"]==pays]["employe_id"].nunique()
+            rows2.append([pays, str(nb), str(emp)])
+        story.append(_tbl(rows2, [cw*0.5, cw*0.25, cw*0.25]))
+
+    # ── Employés les plus mobiles ─────────────────────────────────────────────
+    story.append(Paragraph("Employés les plus mobiles", S_H1))
+    if not mut_p.empty:
+        mob = (mut_p.groupby(["employe_id", "nom", "prenom", "poste"])
+                    .size().reset_index(name="nb_mutations")
+                    .sort_values("nb_mutations", ascending=False).head(10))
+        hdr3 = ["Nom", "Prénom", "Poste", "Mutations"]
+        rows3 = [hdr3] + [[r["nom"], r["prenom"], r["poste"], str(r["nb_mutations"])]
+                           for _, r in mob.iterrows()]
+        story.append(_tbl(rows3, [cw*0.22, cw*0.22, cw*0.38, cw*0.18]))
+
+    # ── Détail des mutations ──────────────────────────────────────────────────
+    story.append(PageBreak())
+    story.append(Paragraph("Détail chronologique des mutations", S_H1))
+    if not mut_p.empty:
+        hdr4 = ["Date", "Employé", "Poste", "Départ", "Arrivée"]
+        rows4 = [hdr4]
+        for _, r in mut_p.sort_values("date_mutation", ascending=False).iterrows():
+            rows4.append([
+                str(r.get("date_mutation",""))[:10],
+                f"{r.get('prenom','')} {r.get('nom','')}",
+                r.get("poste",""),
+                f"{r.get('agence_depart','')} ({r.get('pays_depart','')})",
+                f"{r.get('agence_arrivee','')} ({r.get('pays_arrivee','')})",
+            ])
+        story.append(_tbl(rows4, [cw*0.1, cw*0.2, cw*0.2, cw*0.25, cw*0.25]))
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+def generate_report_mutations_docx(data: dict, year_from: int, year_to: int) -> bytes:
+    """Rapport Word des mutations du personnel (python-docx)."""
+    import io
+    from docx            import Document
+    from docx.shared     import Pt, Cm as _Cm, RGBColor
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.oxml.ns    import qn
+    from docx.oxml       import OxmlElement
+    from datetime import datetime as _dt
+
+    mut   = data["mutations"]
+    cur   = data["current"]
+    doc   = Document()
+    sec   = doc.sections[0]
+    sec.page_width  = _Cm(21); sec.page_height = _Cm(29.7)
+    sec.left_margin = sec.right_margin = _Cm(2.5)
+    sec.top_margin  = sec.bottom_margin = _Cm(2)
+    content_cm = 21 - 5
+
+    for p in list(doc.paragraphs):
+        p._element.getparent().remove(p._element)
+
+    def _rgb(h): return RGBColor(int(h[:2],16),int(h[2:4],16),int(h[4:],16))
+    def _shd(cell, fill):
+        tc=cell._tc; tcPr=tc.get_or_add_tcPr()
+        for old in tcPr.findall(qn("w:shd")): tcPr.remove(old)
+        shd=OxmlElement("w:shd")
+        shd.set(qn("w:val"),"clear"); shd.set(qn("w:color"),"auto")
+        shd.set(qn("w:fill"),fill.upper()); tcPr.append(shd)
+    def _heading(txt, color="0f172a", size=14):
+        p=doc.add_paragraph(); r=p.add_run(txt)
+        r.bold=True; r.font.size=Pt(size); r.font.color.rgb=_rgb(color)
+        p.paragraph_format.space_before=Pt(12); p.paragraph_format.space_after=Pt(5)
+    def _tbl(hdr, rows, cws, hfill="1D4ED8"):
+        n=len(hdr); t=doc.add_table(rows=1,cols=n); t.style="Table Grid"
+        t.alignment=WD_TABLE_ALIGNMENT.LEFT
+        hcells=t.rows[0].cells
+        for i,h in enumerate(hdr):
+            hcells[i].text=str(h); hcells[i].width=_Cm(cws[i])
+            r2=hcells[i].paragraphs[0].runs[0]; r2.bold=True; r2.font.size=Pt(8)
+            r2.font.color.rgb=_rgb("FFFFFF"); _shd(hcells[i],hfill)
+        for ri,row in enumerate(rows):
+            cells=t.add_row().cells; fill="F8FAFC" if ri%2==0 else "FFFFFF"
+            for i,v in enumerate(row):
+                cells[i].text=str(v); cells[i].width=_Cm(cws[i])
+                for rx in cells[i].paragraphs[0].runs: rx.font.size=Pt(8)
+                _shd(cells[i],fill)
+        return t
+
+    if not mut.empty and "annee" in mut.columns:
+        mut_p = mut[(mut["annee"] >= year_from) & (mut["annee"] <= year_to)].copy()
+    else:
+        mut_p = pd.DataFrame()
+
+    # Titre
+    p=doc.add_paragraph(); r=p.add_run("Rapport des Mutations du Personnel")
+    r.bold=True; r.font.size=Pt(17); r.font.color.rgb=_rgb("0f172a")
+    p.paragraph_format.space_after=Pt(2)
+    p2=doc.add_paragraph(f"Période {year_from}–{year_to}  ·  Généré le {_dt.now().strftime('%d/%m/%Y')}")
+    p2.runs[0].font.size=Pt(9); p2.runs[0].font.color.rgb=_rgb("6b7280")
+    p2.paragraph_format.space_after=Pt(6)
+
+    # Résumé
+    _heading("Résumé exécutif")
+    n_mut=len(mut_p); n_emp=mut_p["employe_id"].nunique() if not mut_p.empty else 0
+    smry=[["Employés actifs",str(len(cur))],["Mutations",str(n_mut)],
+          ["Employés mutés",str(n_emp)],
+          ["Moy. mutations/an",f"{n_mut/max(year_to-year_from+1,1):.1f}"]]
+    _tbl(["Indicateur","Valeur"],smry,[content_cm*0.55,content_cm*0.45],
+         hfill="DBEAFE")
+
+    # Par année
+    _heading("Par année")
+    if not mut_p.empty:
+        by_y=(mut_p.groupby("annee").agg(nb=("employe_id","count"),
+              emp=("employe_id","nunique")).reset_index().sort_values("annee"))
+        _tbl(["Année","Mutations","Employés mutés"],
+             [[str(int(r["annee"])),str(r["nb"]),str(r["emp"])] for _,r in by_y.iterrows()],
+             [content_cm*0.25,content_cm*0.4,content_cm*0.35])
+
+    # Top pays
+    _heading("Pays d'accueil les plus fréquents")
+    if not mut_p.empty and "pays_arrivee" in mut_p.columns:
+        top=mut_p["pays_arrivee"].value_counts().head(8)
+        _tbl(["Pays","Mutations"],[[p,str(n)] for p,n in top.items()],
+             [content_cm*0.6,content_cm*0.4])
+
+    # Employés mobiles
+    _heading("Employés les plus mobiles")
+    if not mut_p.empty:
+        mob=(mut_p.groupby(["nom","prenom","poste"]).size()
+                  .reset_index(name="n").sort_values("n",ascending=False).head(10))
+        _tbl(["Nom","Prénom","Poste","Nb mutations"],
+             [[r["nom"],r["prenom"],r["poste"],str(r["n"])] for _,r in mob.iterrows()],
+             [content_cm*0.22,content_cm*0.22,content_cm*0.38,content_cm*0.18])
+
+    # Détail
+    _heading("Détail chronologique")
+    if not mut_p.empty:
+        _tbl(["Date","Employé","Départ","Arrivée"],
+             [[str(r.get("date_mutation",""))[:10],
+               f"{r.get('prenom','')} {r.get('nom','')}",
+               f"{r.get('pays_depart','')}",
+               f"{r.get('ville_arrivee','')} ({r.get('pays_arrivee','')})"]
+              for _,r in mut_p.sort_values("date_mutation",ascending=False).iterrows()],
+             [content_cm*0.12,content_cm*0.22,content_cm*0.33,content_cm*0.33])
+
+    buf=io.BytesIO(); doc.save(buf)
+    return buf.getvalue()
+
+
+@st.dialog("📋 Rapport mutations du personnel")
+def _mutations_rapport_dialog(data: dict) -> None:
+    mut = data.get("mutations", pd.DataFrame())
+    years = sorted(mut["annee"].dropna().unique().astype(int)) if not mut.empty and "annee" in mut.columns else [2019,2024]
+    y_min, y_max = (int(min(years)), int(max(years))) if years else (2019, 2024)
+
+    st.markdown(
+        f"<p style='color:#94a3b8;font-size:.85rem;'>"
+        f"{len(mut)} mutation(s)  ·  {y_min}–{y_max}</p>",
+        unsafe_allow_html=True)
+
+    c1, c2 = st.columns(2)
+    fmt    = c1.selectbox("Format", ["PDF", "Word (.docx)"], key="mrpt_fmt")
+    period = c2.select_slider(
+        "Période", options=list(range(y_min, y_max+1)),
+        value=(y_min, y_max), key="mrpt_period",
+    )
+
+    if st.button("⬇ Générer", type="primary", use_container_width=True, key="mrpt_gen"):
+        with st.spinner("Génération…"):
+            try:
+                yf, yt = int(period[0]), int(period[1])
+                if fmt == "PDF":
+                    raw   = generate_report_mutations_pdf(data, yf, yt)
+                    fname = f"mutations_personnel_{yf}_{yt}.pdf"
+                    mime  = "application/pdf"
+                else:
+                    raw   = generate_report_mutations_docx(data, yf, yt)
+                    fname = f"mutations_personnel_{yf}_{yt}.docx"
+                    mime  = ("application/vnd.openxmlformats-officedocument"
+                             ".wordprocessingml.document")
+                st.download_button(f"⬇  {fname}", data=raw,
+                                   file_name=fname, mime=mime,
+                                   use_container_width=True, key="mrpt_dl")
+            except Exception as e:
+                st.error(f"Erreur : {e}")
+
+
+def render_personnel_module() -> None:
+    """Module Personnel — affectations mondiales et analyse des mutations."""
+    import plotly.express as px
+
+    db = _get_db()
+    try:
+        pdata = _load_personnel_data(db)
+    except Exception as e:
+        st.error(f"Tables `employes` / `affectations` introuvables : {e}")
+        return
+
+    cur     = pdata["current"]
+    mut     = pdata["mutations"]
+    all_aff = pdata["all_aff"]
+
+    # ── Métriques ─────────────────────────────────────────────────────────────
+    n_actifs   = len(cur)
+    n_pays     = cur["pays"].nunique()    if not cur.empty else 0
+    n_mut      = len(mut)
+    n_cur_year = len(mut[mut["annee"] == pd.Timestamp.now().year]) if not mut.empty else 0
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Employés actifs",   n_actifs)
+    m2.metric("Pays couverts",     n_pays)
+    m3.metric("Mutations totales", n_mut)
+    m4.metric(f"Mutations {pd.Timestamp.now().year}", n_cur_year)
+
+    tab_map, tab_mut, tab_teams = st.tabs(
+        ["🌍 Carte des effectifs", "📊 Mutations annuelles", "👥 Équipes par pays"])
+
+    # ── TAB 1 — Carte ─────────────────────────────────────────────────────────
+    with tab_map:
+        if not cur.empty:
+            emp_by_country = (cur.groupby("pays")
+                                 .agg(nb_employes=("id","count"),
+                                      continents=("continent", lambda x: x.iloc[0]))
+                                 .reset_index())
+            emp_by_country["iso_alpha"] = emp_by_country["pays"].map(COUNTRY_ISO_MAP)
+
+            fig = px.choropleth(
+                emp_by_country,
+                locations="iso_alpha",
+                color="nb_employes",
+                hover_name="pays",
+                hover_data={"iso_alpha": False, "nb_employes": "Employés"},
+                color_continuous_scale=[[0,"#172554"],[0.4,"#1d4ed8"],[1,"#93c5fd"]],
+                custom_data=["pays"],
+            )
+            _map_geo_layout(fig, 400)
+            st.plotly_chart(fig, use_container_width=True, key="pers_map")
+
+            # Bouton rapport
+            btn_c, _ = st.columns([2, 8])
+            with btn_c:
+                if st.button("📋 Rapport mutations", key="pers_rpt_btn",
+                             use_container_width=True):
+                    _mutations_rapport_dialog(pdata)
+        else:
+            st.info("Aucun employé actif trouvé.")
+
+    # ── TAB 2 — Mutations par année ───────────────────────────────────────────
+    with tab_mut:
+        if not mut.empty:
+            by_year = (mut.groupby("annee")
+                          .agg(nb_mutations=("employe_id","count"),
+                               nb_employes=("employe_id","nunique"))
+                          .reset_index())
+            by_year["annee_str"] = by_year["annee"].astype(str)
+
+            fig2 = px.bar(
+                by_year, x="annee_str", y="nb_mutations",
+                text="nb_mutations",
+                color_discrete_sequence=["#3b82f6"],
+                labels={"annee_str": "Année", "nb_mutations": "Mutations"},
+            )
+            fig2.update_traces(textposition="outside")
+            fig2.update_layout(
+                paper_bgcolor="#0d0f14", plot_bgcolor="#0d0f14",
+                font_color="#e8eaf0", showlegend=False,
+                margin=dict(l=0,r=0,t=20,b=0), height=300,
+                xaxis=dict(gridcolor="#1e2130"),
+                yaxis=dict(gridcolor="#1e2130"),
+            )
+            st.plotly_chart(fig2, use_container_width=True, key="mut_bar")
+
+            # Détail des mutations récentes
+            st.markdown(
+                "<div style='color:#94a3b8;font-size:.75rem;text-transform:uppercase;"
+                "letter-spacing:1px;font-family:JetBrains Mono,monospace;margin:12px 0 8px;'>"
+                "Détail des mutations</div>", unsafe_allow_html=True)
+
+            for _, r in mut.head(20).iterrows():
+                c_dep = _CONT_COL_P.get(r.get("cont_depart",""), "#6b7280")
+                c_arr = _CONT_COL_P.get(r.get("cont_arrivee",""), "#6b7280")
+                st.markdown(
+                    f"<div style='background:#13151d;border:1px solid #1e2130;"
+                    f"border-radius:10px;padding:9px 16px;margin-bottom:6px;"
+                    f"display:flex;align-items:center;gap:12px;'>"
+                    f"<span style='font-size:.72rem;color:#475569;font-family:JetBrains Mono;"
+                    f"white-space:nowrap;'>{str(r.get('date_mutation',''))[:10]}</span>"
+                    f"<span style='font-weight:600;color:#e8eaf0;min-width:130px;'>"
+                    f"{r.get('prenom','')} {r.get('nom','')}</span>"
+                    f"<span style='font-size:.75rem;color:#64748b;'>{r.get('poste','')}</span>"
+                    f"<span style='flex:1;text-align:right;font-size:.8rem;'>"
+                    f"<span style='color:{c_dep};'>{r.get('pays_depart','')}</span>"
+                    f"<span style='color:#475569;'>  →  </span>"
+                    f"<span style='color:{c_arr};'>{r.get('pays_arrivee','')}</span>"
+                    f"</span></div>",
+                    unsafe_allow_html=True)
+        else:
+            st.info("Aucune mutation enregistrée.")
+
+    # ── TAB 3 — Équipes par pays ───────────────────────────────────────────────
+    with tab_teams:
+        if not cur.empty:
+            postes = {"Directeur Régional":"#6366f1","Agent Commercial":"#3b82f6",
+                      "Responsable Visa":"#10b981","Responsable Opérations":"#f59e0b"}
+            for pays, grp in cur.groupby("pays", sort=True):
+                cont  = grp.iloc[0]["continent"]
+                c_col = _CONT_COL_P.get(cont, "#6b7280")
+                st.markdown(
+                    f"<div style='color:{c_col};font-size:.75rem;font-weight:500;"
+                    f"text-transform:uppercase;letter-spacing:1px;"
+                    f"font-family:JetBrains Mono,monospace;margin:14px 0 6px;'>"
+                    f"{pays}  ·  {cont}  ·  {len(grp)} poste(s)</div>",
+                    unsafe_allow_html=True)
+                for _, emp in grp.iterrows():
+                    p_col = postes.get(emp.get("poste",""), "#94a3b8")
+                    ini   = (str(emp.get("nom","?"))[:1]+str(emp.get("prenom","?"))[:1]).upper()
+                    st.markdown(
+                        f"<div style='background:#13151d;border:1px solid #1e2130;"
+                        f"border-radius:9px;padding:8px 14px;margin-bottom:5px;"
+                        f"display:flex;align-items:center;gap:10px;'>"
+                        f"<div style='width:30px;height:30px;border-radius:50%;"
+                        f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
+                        f"display:flex;align-items:center;justify-content:center;"
+                        f"font-weight:700;font-size:.8rem;color:white;flex-shrink:0;'>{ini}</div>"
+                        f"<div style='flex:1;'>"
+                        f"<span style='font-weight:600;color:#e8eaf0;'>"
+                        f"{emp.get('prenom','')} {emp.get('nom','')}</span>"
+                        f"  <span style='font-size:.75rem;color:#64748b;'>"
+                        f"{emp.get('agence','')}</span></div>"
+                        f"<span style='font-size:.72rem;padding:2px 8px;border-radius:20px;"
+                        f"background:{p_col}22;color:{p_col};white-space:nowrap;'>"
+                        f"{emp.get('poste','')}</span>"
+                        f"<span style='font-size:.7rem;color:#475569;margin-left:6px;'>"
+                        f"depuis {str(emp.get('date_debut',''))[:10]}</span>"
+                        f"</div>", unsafe_allow_html=True)
+        else:
+            st.info("Aucune affectation active.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FICHE PROFIL CLIENT — fonction exportable
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _safe_get(data, col, default="—"):
+    """
+    Accède à data[col] de manière résiliente.
+    Retourne default si la colonne est absente, None, NaN, ou vide.
+    Compatible avec dict, pd.Series et tout objet subscriptable.
+
+    Exemples
+    --------
+    _safe_get(row, "email")            → valeur ou "—"
+    _safe_get(row, "note", default=0)  → 0 si absent / NaN
+    _safe_get(None, "col")             → "—"
+    """
+    import math
+    if data is None:
+        return default
+    try:
+        if hasattr(data, "get") and callable(data.get):
+            val = data.get(col)
+        elif hasattr(data, "index") and col in data.index:
+            val = data[col]
+        else:
+            return default
+    except (KeyError, IndexError, TypeError):
+        return default
+    if val is None:
+        return default
+    try:
+        if math.isnan(float(val)):
+            return default
+    except (ValueError, TypeError):
+        pass
+    if isinstance(val, str) and not val.strip():
+        return default
+    return val
+
+
+def render_client_profile_card(
+    client_row,
+    voyages_df=None,
+    all_voyages_df=None,
+    # ── Colonnes client — coordonnées ──────────────────────────────────────────
+    col_nom="nom", col_prenom="prenom", col_email="email",
+    col_telephone="telephone", col_ville="ville", col_statut="statut",
+    col_date_inscription="date_inscription",
+    # ── Colonnes client — papiers d'identité ────────────────────────────────────
+    col_nationalite="nationalite",
+    col_num_passeport="num_passeport",
+    col_exp_passeport="date_expiration_passeport",
+    col_num_ci="num_carte_identite",
+    col_exp_ci="date_expiration_ci",
+    # ── Colonnes client — situation professionnelle ─────────────────────────────
+    col_profession="profession", col_employeur="employeur",
+    col_situation_pro="situation_pro",
+    # ── Colonnes voyage ─────────────────────────────────────────────────────────
+    col_v_destination="destination", col_v_pays="pays_destination",
+    col_v_continent="continent",    col_v_date_dep="date_depart",
+    col_v_date_ret="date_retour",   col_v_duree="duree_jours",
+    col_v_type="type_voyage",       col_v_transport="transport",
+    col_v_hotel="hotel",            col_v_budget="budget",
+    col_v_statut="statut_voyage",   col_v_note="note",
+    col_v_groupe="groupe_voyage_id",
+    # ── Colonnes dans all_voyages_df (compagnons) ────────────────────────────────
+    col_c_client_id="client_id", col_c_nom="nom", col_c_prenom="prenom",
+    col_c_profession="profession", col_c_ville="ville", col_c_statut="statut",
+    # ── Options d'affichage ─────────────────────────────────────────────────────
+    show_identity=True, show_professional=True, show_companions=True,
+):
+    """
+    Affiche la fiche profil complète d'un client avec ses voyages.
+
+    Paramètres
+    ----------
+    client_row      : dict ou pd.Series — données du client
+    voyages_df      : DataFrame des voyages de ce client (None = pas de voyages)
+    all_voyages_df  : DataFrame de TOUS les voyages avec groupe_voyage_id non nul,
+                      utilisé pour trouver les compagnons. Colonnes attendues :
+                      col_v_groupe, col_c_client_id, col_c_nom, col_c_prenom.
+    col_*           : noms de colonnes configurables — permet de brancher la
+                      fonction sur n'importe quel schéma DB sans modifier le code.
+    show_identity   : afficher la section papiers d'identité
+    show_professional : afficher la section situation professionnelle
+    show_companions : afficher les compagnons de voyage (expander)
+
+    Les valeurs manquantes (colonne absente, None, NaN, chaîne vide) sont
+    gérées silencieusement via _safe_get — aucune ligne vide n'est rendue.
+    """
+    sg = lambda col, d="—": _safe_get(client_row, col, d)
+
+    # ── En-tête ──────────────────────────────────────────────────────────────
+    nom     = sg(col_nom);        prenom = sg(col_prenom)
+    ville   = sg(col_ville, "");  statut = sg(col_statut, "")
+    email   = sg(col_email, "");  tel    = sg(col_telephone, "")
+    ini     = ((prenom[:1] if prenom and prenom != "—" else "") +
+               (nom[:1]   if nom    and nom    != "—" else "")).upper() or "?"
+    sc      = "#4ade80" if statut == "actif" else "#f87171"
+    contact_html = ""
+    if email: contact_html += f"<div style='font-size:.72rem;'>{email}</div>"
+    if tel:   contact_html += f"<div style='font-size:.72rem;color:#64748b;'>{tel}</div>"
+
+    st.markdown(
+        f"<div style='background:#13151d;border:1px solid #1e2130;"
+        f"border-bottom:none;border-radius:12px 12px 0 0;padding:14px 20px 10px;'>"
+        f"<div style='display:flex;align-items:center;gap:14px;'>"
+        f"<div style='width:44px;height:44px;border-radius:50%;"
+        f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
+        f"display:flex;align-items:center;justify-content:center;"
+        f"font-weight:700;font-size:.95rem;color:white;flex-shrink:0;'>{ini}</div>"
+        f"<div style='flex:1;'>"
+        f"<div style='font-weight:700;font-size:.95rem;color:#e8eaf0;'>{prenom} {nom}</div>"
+        f"<div style='color:#64748b;font-size:.78rem;margin-top:1px;'>"
+        f"{''+ville+' &nbsp;·&nbsp; ' if ville else ''}"
+        f"<span style='color:{sc};'>{statut}</span></div></div>"
+        f"<div style='text-align:right;color:#94a3b8;'>{contact_html}</div>"
+        f"</div></div>",
+        unsafe_allow_html=True)
+
+    # ── Identité + Pro ────────────────────────────────────────────────────────
+    if show_identity or show_professional:
+        ncols = 2 if (show_identity and show_professional) else 1
+        cols  = st.columns(ncols)
+
+        if show_identity:
+            nat    = sg(col_nationalite, "")
+            p_num  = sg(col_num_passeport, "")
+            p_exp  = sg(col_exp_passeport, "")
+            ci_num = sg(col_num_ci, "")
+            ci_exp = sg(col_exp_ci, "")
+            id_rows = []
+            if nat:    id_rows.append(("Nationalité", nat))
+            if p_num:  id_rows.append(("Passeport",
+                           p_num + (f"  ·  exp. {p_exp}" if p_exp else "")))
+            if ci_num: id_rows.append(("Carte d'identité",
+                           ci_num + (f"  ·  exp. {ci_exp}" if ci_exp else "")))
+            body = "".join(
+                f"<div style='display:flex;gap:8px;padding:5px 0;"
+                f"border-top:1px solid #1e2130;'>"
+                f"<span style='color:#64748b;font-size:.72rem;min-width:100px;"
+                f"flex-shrink:0;'>{k}</span>"
+                f"<span style='color:#e8eaf0;font-size:.78rem;"
+                f"font-family:JetBrains Mono,monospace;'>{v}</span></div>"
+                for k, v in id_rows
+            ) if id_rows else "<span style='color:#334155;font-size:.75rem;font-style:italic;'>Non renseigné</span>"
+            with cols[0]:
+                st.markdown(
+                    f"<div style='background:#13151d;border:1px solid #1e2130;"
+                    f"border-top:none;{'border-right:none;' if show_professional else ''}"
+                    f"padding:11px 16px;'>"
+                    f"<div style='color:#a78bfa;font-size:.68rem;text-transform:uppercase;"
+                    f"letter-spacing:1px;font-family:JetBrains Mono,monospace;"
+                    f"margin-bottom:7px;'>Papiers d'identité</div>{body}</div>",
+                    unsafe_allow_html=True)
+
+        if show_professional:
+            prof = sg(col_profession, "");  emp = sg(col_employeur, "")
+            sit  = sg(col_situation_pro, "")
+            pro_rows = []
+            if prof: pro_rows.append(("Profession", prof))
+            if emp:  pro_rows.append(("Employeur",  emp))
+            if sit:  pro_rows.append(("Contrat",    sit))
+            body2 = "".join(
+                f"<div style='display:flex;gap:8px;padding:5px 0;"
+                f"border-top:1px solid #1e2130;'>"
+                f"<span style='color:#64748b;font-size:.72rem;min-width:85px;"
+                f"flex-shrink:0;'>{k}</span>"
+                f"<span style='color:#e8eaf0;font-size:.78rem;'>{v}</span></div>"
+                for k, v in pro_rows
+            ) if pro_rows else "<span style='color:#334155;font-size:.75rem;font-style:italic;'>Non renseigné</span>"
+            with cols[-1]:
+                st.markdown(
+                    f"<div style='background:#13151d;border:1px solid #1e2130;"
+                    f"border-top:none;padding:11px 16px;'>"
+                    f"<div style='color:#60a5fa;font-size:.68rem;text-transform:uppercase;"
+                    f"letter-spacing:1px;font-family:JetBrains Mono,monospace;"
+                    f"margin-bottom:7px;'>Situation professionnelle</div>{body2}</div>",
+                    unsafe_allow_html=True)
+
+    # ── Voyages ───────────────────────────────────────────────────────────────
+    if voyages_df is None or (hasattr(voyages_df, "empty") and voyages_df.empty):
+        st.markdown(
+            "<div style='background:#13151d;border:1px solid #1e2130;"
+            "border-top:none;border-radius:0 0 12px 12px;padding:12px 16px;"
+            "color:#334155;font-size:.8rem;font-style:italic;'>"
+            "Aucun voyage enregistré.</div>"
+            "<div style='margin-bottom:14px'></div>",
+            unsafe_allow_html=True)
+        return
+
+    n_v = len(voyages_df)
+    avg_bgt = voyages_df[col_v_budget].dropna().mean() \
+              if col_v_budget in voyages_df.columns else None
+
+    # Identifiant du client courant (pour exclure de la liste compagnons)
+    _own_id = _safe_get(client_row, "id", None)
+    if _own_id in ("—", None):
+        _own_id = _safe_get(client_row, "clients_id", None)
+
+    st.markdown(
+        f"<div style='background:#13151d;border:1px solid #1e2130;"
+        f"border-top:1px solid #2a2d3e;padding:7px 16px;'>"
+        f"<span style='color:#94a3b8;font-size:.68rem;text-transform:uppercase;"
+        f"letter-spacing:1px;font-family:JetBrains Mono,monospace;'>"
+        f"{n_v} voyage{'s' if n_v > 1 else ''}</span></div>",
+        unsafe_allow_html=True)
+
+    vrows = list(voyages_df.iterrows())
+    for vi, (_, vrow) in enumerate(vrows):
+        vsg      = lambda col, d="—": _safe_get(vrow, col, d)
+        is_last  = vi == len(vrows) - 1
+        br       = "border-radius:0 0 12px 12px;" if is_last else ""
+        dest     = vsg(col_v_destination);  pays   = vsg(col_v_pays, "")
+        cont     = vsg(col_v_continent, "");tv      = vsg(col_v_type, "")
+        date_dep = str(vsg(col_v_date_dep, ""))[:10]
+        date_ret = str(vsg(col_v_date_ret, ""))[:10]
+        duree    = vsg(col_v_duree, None);   hotel   = vsg(col_v_hotel, "")
+        transport= vsg(col_v_transport, ""); note_v  = vsg(col_v_note, None)
+        budget   = vsg(col_v_budget, None);  gid     = vsg(col_v_groupe, None)
+        cc       = CONT_COLORS.get(cont, "#6b7280")
+        tc       = TYPE_COLORS.get(tv,   "#6b7280")
+        try:    stars = "⭐" * int(float(note_v)) if note_v and note_v != "—" else ""
+        except: stars = ""
+
+        # Compagnons de voyage
+        companions = []
+        if show_companions and gid and gid != "—" and all_voyages_df is not None:
+            try:
+                gid_int = int(float(gid))
+                cdf = all_voyages_df[
+                    all_voyages_df[col_v_groupe].apply(
+                        lambda x: int(float(x)) == gid_int
+                        if pd.notna(x) and x != "" else False
+                    )
+                ]
+                if _own_id not in ("—", None):
+                    cdf = cdf[cdf[col_c_client_id].astype(str)
+                              != str(int(float(_own_id)))]
+                seen = set()
+                for _, cr in cdf.iterrows():
+                    cid_ = str(_safe_get(cr, col_c_client_id, ""))
+                    if cid_ not in seen:
+                        seen.add(cid_)
+                        companions.append((
+                            _safe_get(cr, col_c_prenom,    ""),
+                            _safe_get(cr, col_c_nom,       ""),
+                            _safe_get(cr, col_c_profession,""),
+                            _safe_get(cr, col_c_ville,     ""),
+                            _safe_get(cr, col_c_statut,    ""),
+                        ))
+            except Exception:
+                companions = []
+
+        has_comp = bool(companions)
+        last_border = f"border-bottom:1px solid #1e2130;{br}" if is_last else ""
+
+        col_voy, col_bgt, col_comp = st.columns([7, 1.5, 1.5])
+        with col_voy:
+            d_str = f"  ·  {int(float(duree))}j" \
+                    if duree and duree != "—" else ""
+            st.markdown(
+                f"<div style='background:#13151d;"
+                f"border-left:1px solid #1e2130;border-right:1px solid #1e2130;"
+                f"{last_border}padding:8px 16px;'>"
+                f"<div style='display:flex;align-items:center;gap:8px;"
+                f"border-top:1px solid #1e2130;padding-top:6px;'>"
+                f"<div style='width:3px;height:26px;border-radius:2px;"
+                f"background:{cc};flex-shrink:0;'></div>"
+                f"<div style='flex:1;'>"
+                f"<span style='color:#e8eaf0;font-weight:600;font-size:.85rem;'>"
+                f"{dest}</span>"
+                f"<span style='color:#475569;font-size:.73rem;margin-left:8px;'>"
+                f"{pays}{'  ·  ' if pays else ''}{date_dep}"
+                f"{'  →  '+date_ret if date_ret and date_ret != date_dep else ''}"
+                f"{d_str}</span></div>"
+                f"<span style='background:{tc}22;color:{tc};font-size:.68rem;"
+                f"padding:2px 7px;border-radius:10px;white-space:nowrap;'>{tv}</span>"
+                f"{'<span style=\"font-size:.72rem;margin-left:4px;\">'+stars+'</span>' if stars else ''}"
+                f"</div></div>",
+                unsafe_allow_html=True)
+
+        with col_bgt:
+            if budget and budget != "—":
+                bgt = float(budget)
+                if bgt < 800:    cat, cc2 = "Économique", "#4ade80"
+                elif bgt < 2000: cat, cc2 = "Modéré",     "#60a5fa"
+                elif bgt < 4000: cat, cc2 = "Premium",    "#a78bfa"
+                else:            cat, cc2 = "Luxe",        "#f59e0b"
+                with st.popover(f"💰 {int(bgt):,} €", use_container_width=True):
+                    st.markdown(
+                        f"<div style='font-size:1.15rem;font-weight:700;"
+                        f"font-family:JetBrains Mono,monospace;color:#4ade80;"
+                        f"margin-bottom:4px;'>{int(bgt):,} €</div>"
+                        f"<span style='background:{cc2}22;color:{cc2};font-size:.7rem;"
+                        f"padding:2px 10px;border-radius:20px;'>{cat}</span>",
+                        unsafe_allow_html=True)
+                    st.divider()
+                    try:
+                        d = int(float(duree))
+                        if d > 0:
+                            st.markdown(f"📅 **Par jour :** {int(bgt/d):,} €  *({d} j)*")
+                    except Exception: pass
+                    if avg_bgt and not pd.isna(avg_bgt):
+                        diff = bgt - avg_bgt
+                        icon = "🔴" if diff > 500 else ("🟡" if diff > -500 else "🟢")
+                        st.markdown(
+                            f"{icon} **vs moyenne :** "
+                            f"{'+'if diff>=0 else ''}{int(diff):,} €"
+                            f"  *(moy. {int(avg_bgt):,} €)*")
+                    if hotel:    st.markdown(f"🏨 **Hôtel :** {hotel}")
+                    if transport:st.markdown(f"✈️ **Transport :** {transport}")
+
+        with col_comp:
+            lbl_btn = f"👥 {len(companions)}" if has_comp else "👥 0"
+            if has_comp:
+                with st.popover(lbl_btn, use_container_width=True):
+                    st.markdown(
+                        f"<div style='font-size:.7rem;text-transform:uppercase;"
+                        f"letter-spacing:1px;font-family:JetBrains Mono,monospace;"
+                        f"color:#94a3b8;margin-bottom:8px;'>"
+                        f"{len(companions)} compagnon{'s' if len(companions)>1 else ''}"
+                        f" de voyage</div>",
+                        unsafe_allow_html=True)
+                    for cp_prenom, cp_nom, cp_prof, cp_ville, cp_stat in companions:
+                        cp_ini = ((cp_prenom[:1] if cp_prenom else "") +
+                                  (cp_nom[:1]    if cp_nom    else "")).upper() or "?"
+                        sc2    = "#4ade80" if cp_stat == "actif" else "#f87171"
+                        meta   = "  ·  ".join(filter(None, [cp_prof, cp_ville]))
+                        st.markdown(
+                            f"<div style='display:flex;align-items:flex-start;gap:10px;"
+                            f"padding:8px 0;border-top:1px solid #1e2130;'>"
+                            f"<div style='width:32px;height:32px;border-radius:50%;"
+                            f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
+                            f"display:flex;align-items:center;justify-content:center;"
+                            f"font-weight:700;font-size:.72rem;color:white;"
+                            f"flex-shrink:0;margin-top:1px;'>{cp_ini}</div>"
+                            f"<div style='flex:1;'>"
+                            f"<div style='font-weight:600;font-size:.85rem;color:#e8eaf0;'>"
+                            f"{cp_prenom} {cp_nom}</div>"
+                            f"{'<div style=\"font-size:.72rem;color:#64748b;margin-top:2px;\">' + meta + '</div>' if meta else ''}"
+                            f"<div style='margin-top:3px;'>"
+                            f"<span style='font-size:.68rem;padding:1px 7px;border-radius:20px;"
+                            f"background:{sc2}22;color:{sc2};'>{cp_stat}</span>"
+                            f"</div></div></div>",
+                            unsafe_allow_html=True)
+            else:
+                st.markdown(
+                    "<div style='display:flex;align-items:center;"
+                    "justify-content:center;height:36px;"
+                    "border:1px solid #1e2130;border-radius:6px;"
+                    "color:#334155;font-size:.83rem;"
+                    "cursor:not-allowed;user-select:none;'>👥 0</div>",
+                    unsafe_allow_html=True,
+                )
+
+        if is_last:
+            st.markdown(
+                "<div style='background:#13151d;border:1px solid #1e2130;"
+                "border-top:none;border-radius:0 0 12px 12px;height:6px;'></div>",
+                unsafe_allow_html=True)
+
+    st.markdown("<div style='margin-bottom:14px'></div>", unsafe_allow_html=True)
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FICHE VOYAGE — fonction exportable (vue centrée sur le voyage)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def render_voyage_profile_card(
+    voyage_row,
+    all_voyages_df=None,
+    # ── Colonnes voyage ──────────────────────────────────────────────────────
+    col_destination="destination",  col_pays="pays_destination",
+    col_continent="continent",      col_date_dep="date_depart",
+    col_date_ret="date_retour",     col_duree="duree_jours",
+    col_type="type_voyage",         col_transport="transport",
+    col_hotel="hotel",              col_budget="budget",
+    col_statut="statut",            col_note="note",
+    col_groupe="groupe_voyage_id",  col_client_id="client_id",
+    # ── Colonnes client dans voyage_row (si JOIN) ─────────────────────────────
+    col_nom="nom",                  col_prenom="prenom",
+    col_ville="ville",              col_statut_client="statut",
+    col_profession="profession",
+    # ── Colonnes membres dans all_voyages_df ──────────────────────────────────
+    col_m_client_id="client_id",   col_m_nom="nom",
+    col_m_prenom="prenom",         col_m_profession="profession",
+    col_m_ville="ville",           col_m_statut="statut",
+    # ── Options ───────────────────────────────────────────────────────────────
+    show_client_info=True,
+):
+    """
+    Affiche une carte centrée sur un voyage, avec popover des participants.
+
+    Symétrique à render_client_profile_card — même convention col_*,
+    même _safe_get, même résilience aux colonnes manquantes.
+
+    voyage_row      : pd.Series ou dict — une ligne de résultat
+    all_voyages_df  : DataFrame avec groupe_voyage_id + infos clients,
+                      utilisé pour afficher tous les participants du groupe.
+                      Passer None pour désactiver.
+    show_client_info: afficher la mini-carte du client principal en bas
+    """
+    vsg = lambda col, d="—": _safe_get(voyage_row, col, d)
+
+    dest     = vsg(col_destination)
+    pays     = vsg(col_pays,     "")
+    cont     = vsg(col_continent,"")
+    date_dep = str(vsg(col_date_dep, ""))[:10]
+    date_ret = str(vsg(col_date_ret, ""))[:10]
+    duree    = vsg(col_duree,    None)
+    tv       = vsg(col_type,     "")
+    transport= vsg(col_transport,"")
+    hotel    = vsg(col_hotel,    "")
+    budget   = vsg(col_budget,   None)
+    statut   = vsg(col_statut,   "")
+    note_v   = vsg(col_note,     None)
+    gid      = vsg(col_groupe,   None)
+    own_cid  = vsg(col_client_id,None)
+
+    cc  = CONT_COLORS.get(cont, "#6b7280")
+    tc  = TYPE_COLORS.get(tv,   "#6b7280")
+    try:   stars = "⭐" * int(float(note_v)) if note_v and note_v != "—" else ""
+    except: stars = ""
+    sv_col = {"terminé":"#4ade80","à venir":"#fbbf24","annulé":"#f87171"}.get(statut,"#94a3b8")
+
+    d_str  = f"{int(float(duree))}j" if duree and duree != "—" else ""
+    dt_str = f"{date_dep} → {date_ret}" if date_ret and date_ret != date_dep else date_dep
+
+    # ── Participants : client principal + compagnons ───────────────────────────
+    nom_c    = vsg(col_nom,     "")
+    prenom_c = vsg(col_prenom,  "")
+    members  = []
+    if nom_c or prenom_c:
+        members.append((prenom_c, nom_c,
+                         vsg(col_profession,""), vsg(col_ville,""),
+                         vsg(col_statut_client,"")))
+
+    if gid and gid != "—" and all_voyages_df is not None:
+        try:
+            gid_int = int(float(gid))
+            cdf = all_voyages_df[
+                all_voyages_df[col_groupe].apply(
+                    lambda x: int(float(x)) == gid_int
+                    if pd.notna(x) and x != "" else False)]
+            if own_cid not in ("—", None):
+                cdf = cdf[cdf[col_m_client_id].astype(str) != str(int(float(own_cid)))]
+            seen = set()
+            for _, cr in cdf.iterrows():
+                cid_ = str(_safe_get(cr, col_m_client_id, ""))
+                if cid_ not in seen:
+                    seen.add(cid_)
+                    members.append((
+                        _safe_get(cr, col_m_prenom,    ""),
+                        _safe_get(cr, col_m_nom,       ""),
+                        _safe_get(cr, col_m_profession,""),
+                        _safe_get(cr, col_m_ville,     ""),
+                        _safe_get(cr, col_m_statut,    ""),
+                    ))
+        except Exception:
+            pass
+
+    n_mbr = len(members)
+
+    # ── Hero : destination + méta ─────────────────────────────────────────────
+    meta = "  ·  ".join(filter(None, [pays, cont, d_str, dt_str]))
+    st.markdown(
+        f"<div style='background:#13151d;border:1px solid #1e2130;"
+        f"border-bottom:none;border-radius:12px 12px 0 0;"
+        f"border-left:4px solid {cc};padding:13px 20px 9px;'>"
+        f"<div style='display:flex;align-items:flex-start;"
+        f"justify-content:space-between;gap:8px;'>"
+        f"<div>"
+        f"<div style='font-weight:700;font-size:1rem;color:#e8eaf0;'>{dest}</div>"
+        f"<div style='color:#64748b;font-size:.77rem;margin-top:3px;'>{meta}</div>"
+        f"</div>"
+        f"{'<div style=\"font-size:.8rem;flex-shrink:0;\">'+stars+'</div>' if stars else ''}"
+        f"</div></div>",
+        unsafe_allow_html=True)
+
+    # ── Tags + budget popover + membres popover ───────────────────────────────
+    col_tg, col_bg, col_mb = st.columns([6, 2, 2])
+
+    with col_tg:
+        t1 = (f"<span style='background:{tc}22;color:{tc};font-size:.7rem;"
+              f"padding:2px 8px;border-radius:10px;margin-right:5px;'>{tv}</span>"
+              if tv else "")
+        t2 = (f"<span style='background:{sv_col}22;color:{sv_col};font-size:.7rem;"
+              f"padding:2px 8px;border-radius:10px;'>{statut}</span>"
+              if statut else "")
+        st.markdown(
+            f"<div style='background:#13151d;border-left:1px solid #1e2130;"
+            f"border-right:1px solid #1e2130;border-top:1px solid #1e2130;"
+            f"padding:7px 16px;min-height:36px;display:flex;align-items:center;'>"
+            f"{t1}{t2}</div>",
+            unsafe_allow_html=True)
+
+    with col_bg:
+        if budget and budget != "—":
+            bgt = float(budget)
+            if bgt < 800:    cat, cc2 = "Économique","#4ade80"
+            elif bgt < 2000: cat, cc2 = "Modéré",    "#60a5fa"
+            elif bgt < 4000: cat, cc2 = "Premium",   "#a78bfa"
+            else:            cat, cc2 = "Luxe",       "#f59e0b"
+            with st.popover(f"💰 {int(bgt):,} €", use_container_width=True):
+                st.markdown(
+                    f"<div style='font-size:1.1rem;font-weight:700;"
+                    f"font-family:JetBrains Mono,monospace;color:#4ade80;'>"
+                    f"{int(bgt):,} €</div>"
+                    f"<span style='background:{cc2}22;color:{cc2};font-size:.7rem;"
+                    f"padding:2px 9px;border-radius:20px;'>{cat}</span>",
+                    unsafe_allow_html=True)
+                st.divider()
+                try:
+                    d_ = int(float(duree))
+                    if d_ > 0: st.markdown(f"📅 **Par jour :** {int(bgt/d_):,} €  *({d_} j)*")
+                except: pass
+                if hotel and hotel != "—":     st.markdown(f"🏨 {hotel}")
+                if transport and transport != "—": st.markdown(f"✈️ {transport}")
+
+    with col_mb:
+        if members:
+            with st.popover(f"👥 {n_mbr}", use_container_width=True):
+                st.markdown(
+                    f"<div style='font-size:.7rem;text-transform:uppercase;"
+                    f"letter-spacing:1px;font-family:JetBrains Mono,monospace;"
+                    f"color:#94a3b8;margin-bottom:8px;'>"
+                    f"{n_mbr} participant{'s' if n_mbr > 1 else ''}</div>",
+                    unsafe_allow_html=True)
+                for mp, mn, mprof, mvil, mstat in members:
+                    m_ini = ((mp[:1] if mp else "")+(mn[:1] if mn else "")).upper() or "?"
+                    m_sc  = "#4ade80" if mstat=="actif" else ("#f87171" if mstat=="inactif" else "#94a3b8")
+                    m_meta= "  ·  ".join(filter(None, [mprof, mvil]))
+                    st.markdown(
+                        f"<div style='display:flex;align-items:flex-start;gap:10px;"
+                        f"padding:7px 0;border-top:1px solid #1e2130;'>"
+                        f"<div style='width:30px;height:30px;border-radius:50%;"
+                        f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
+                        f"display:flex;align-items:center;justify-content:center;"
+                        f"font-weight:700;font-size:.7rem;color:white;"
+                        f"flex-shrink:0;margin-top:1px;'>{m_ini}</div>"
+                        f"<div style='flex:1;'>"
+                        f"<div style='font-weight:600;font-size:.83rem;color:#e8eaf0;'>"
+                        f"{mp} {mn}</div>"
+                        f"{'<div style=\"font-size:.72rem;color:#64748b;margin-top:1px;\">' + m_meta + '</div>' if m_meta else ''}"
+                        f"{'<div style=\"margin-top:2px;\"><span style=\"font-size:.68rem;padding:1px 7px;border-radius:20px;background:'+m_sc+'22;color:'+m_sc+';\">'+mstat+'</span></div>' if mstat and mstat != '—' else ''}"
+                        f"</div></div>",
+                        unsafe_allow_html=True)
+        else:
+            st.markdown(
+                "<div style='display:flex;align-items:center;justify-content:center;"
+                "height:36px;border:1px solid #1e2130;border-radius:6px;"
+                "color:#334155;font-size:.83rem;cursor:not-allowed;user-select:none;'>"
+                "👥 0</div>",
+                unsafe_allow_html=True)
+
+    # ── Hôtel + transport ─────────────────────────────────────────────────────
+    if (hotel and hotel != "—") or (transport and transport != "—"):
+        dets = "  ·  ".join(filter(None, [
+            f"🏨 {hotel}"     if hotel     and hotel     != "—" else "",
+            f"✈️ {transport}" if transport and transport != "—" else "",
+        ]))
+        st.markdown(
+            f"<div style='background:#13151d;border-left:1px solid #1e2130;"
+            f"border-right:1px solid #1e2130;border-top:1px solid #2a2d3e;"
+            f"padding:6px 16px;color:#64748b;font-size:.77rem;'>{dets}</div>",
+            unsafe_allow_html=True)
+
+    # ── Client principal ──────────────────────────────────────────────────────
+    if show_client_info and (nom_c or prenom_c):
+        sc_c  = "#4ade80" if vsg(col_statut_client) == "actif" else "#f87171"
+        ini_c = ((prenom_c[:1] if prenom_c else "")+(nom_c[:1] if nom_c else "")).upper() or "?"
+        meta_c = "  ·  ".join(filter(None, [vsg(col_profession,""), vsg(col_ville,"")]))
+        st.markdown(
+            f"<div style='background:#13151d;border:1px solid #1e2130;"
+            f"border-top:1px solid #2a2d3e;border-radius:0 0 12px 12px;"
+            f"padding:8px 16px;display:flex;align-items:center;gap:10px;'>"
+            f"<div style='width:28px;height:28px;border-radius:50%;"
+            f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
+            f"display:flex;align-items:center;justify-content:center;"
+            f"font-weight:700;font-size:.7rem;color:white;flex-shrink:0;'>{ini_c}</div>"
+            f"<div style='flex:1;'>"
+            f"<span style='font-weight:600;font-size:.84rem;color:#e8eaf0;'>"
+            f"{prenom_c} {nom_c}</span>"
+            f"{'<span style=\"font-size:.72rem;color:#64748b;margin-left:8px;\">' + meta_c + '</span>' if meta_c else ''}"
+            f"</div>"
+            f"<span style='font-size:.68rem;padding:2px 8px;border-radius:20px;"
+            f"background:{sc_c}22;color:{sc_c};'>{vsg(col_statut_client,'')}</span>"
+            f"</div>",
+            unsafe_allow_html=True)
+    else:
+        st.markdown(
+            "<div style='background:#13151d;border:1px solid #1e2130;"
+            "border-top:none;border-radius:0 0 12px 12px;height:5px;'></div>",
+            unsafe_allow_html=True)
+
+    st.markdown("<div style='margin-bottom:12px'></div>", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+def render_connection_page() -> bool:
+    """
+    Affiche la page de connexion à la base de données.
+    Retourne True si une connexion est active, False si on attend.
+    """
+    # Déjà connecté ?
+    if st.session_state.get("_db_adapter"):
+        return True
+
+    # Lecture depuis st.secrets (prioritaire sur le formulaire)
+    if "database" in st.secrets:
+        try:
+            adapter = connect_db(dict(st.secrets["database"]))
+            schema  = introspect_schema_from_db(adapter)
+            st.session_state["_db_adapter"]        = adapter
+            st.session_state["_db_schema_override"] = schema
+            return True
+        except Exception as e:
+            st.error(f"⚠️ Connexion via `st.secrets` échouée : {e}")
+
+    # Formulaire interactif
+    st.markdown("""
+    <div style='max-width:520px;margin:4rem auto 0;'>
+    <h1 style='font-size:1.6rem;margin-bottom:.3rem;'>🔌 Connexion</h1>
+    <p style='color:#6b7280;margin-bottom:1.5rem;font-size:.9rem;'>
+    Connectez une base réelle ou utilisez la démo SQLite intégrée.</p>
+    </div>""", unsafe_allow_html=True)
+
+    with st.container():
+        c1, c2, c3 = st.columns([1, 3, 1])
+        with c2:
+            db_type = st.selectbox(
+                "Type de base de données",
+                ["sqlite_demo", "sqlite_file", "postgresql", "mysql"],
+                format_func=lambda x: {
+                    "sqlite_demo":  "🧪 SQLite  — données de démonstration",
+                    "sqlite_file":  "📁 SQLite  — fichier local",
+                    "postgresql":   "🐘 PostgreSQL",
+                    "mysql":        "🐬 MySQL / MariaDB",
+                }[x],
+                key="conn_db_type",
+            )
+
+            cfg: dict = {"type": db_type}
+
+            if db_type == "sqlite_demo":
+                st.info("Aucune config requise. La démo contient des clients et voyages fictifs.")
+
+            elif db_type == "sqlite_file":
+                cfg["type"] = "sqlite"
+                cfg["path"] = st.text_input("Chemin du fichier .db",
+                                             value="data.db", key="conn_path")
+                st.caption("Chemin absolu ou relatif au répertoire de l'app.")
+
+            else:
+                host_default = "localhost"
+                port_default = 5432 if db_type == "postgresql" else 3306
+                col_h, col_p = st.columns([3, 1])
+                cfg["host"]     = col_h.text_input("Hôte", host_default, key="conn_host")
+                cfg["port"]     = col_p.number_input("Port", value=port_default,
+                                                      min_value=1, max_value=65535,
+                                                      key="conn_port")
+                cfg["database"] = st.text_input("Nom de la base", key="conn_db")
+                col_u, col_pw = st.columns(2)
+                cfg["user"]     = col_u.text_input("Utilisateur", key="conn_user")
+                cfg["password"] = col_pw.text_input("Mot de passe", type="password",
+                                                     key="conn_pw")
+                st.caption(
+                    "💡 En production, stockez ces infos dans `.streamlit/secrets.toml` "
+                    "pour ne pas les saisir à chaque démarrage.")
+
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+            btn_col, _ = st.columns([2, 1])
+            with btn_col:
+                if st.button("🔌 Connecter", type="primary", use_container_width=True):
+                    if db_type == "sqlite_demo":
+                        # Mode démo : utilise get_connection() déjà en mémoire
+                        adapter = DBAdapter("sqlite", get_connection(), "Démo SQLite")
+                        st.session_state["_db_adapter"]        = adapter
+                        st.session_state["_db_schema_override"] = None
+                        st.rerun()
+                    else:
+                        with st.spinner("Connexion en cours…"):
+                            try:
+                                adapter = connect_db(cfg)
+                                schema  = introspect_schema_from_db(adapter)
+                                st.session_state["_db_adapter"]        = adapter
+                                st.session_state["_db_schema_override"] = schema
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Connexion échouée : {e}")
+    return False
+# ══════════════════════════════════════════════════════════════════════════════
 OPERATORS = {
     "Contient":     ("LIKE", lambda v: f"%{v}%"),
     "Commence par": ("LIKE", lambda v: f"{v}%"),
@@ -187,57 +2584,28 @@ OP_LABELS = list(OPERATORS.keys())
 MONTHS_FR = ["","Janvier","Février","Mars","Avril","Mai","Juin",
              "Juillet","Août","Septembre","Octobre","Novembre","Décembre"]
 
-# Colonnes visibles en mode simplifié : (col_technique, label_affichage)
-SIMPLIFIED_COLS = {
-    "clients": [
-        ("nom",              "Nom de famille"),
-        ("prenom",           "Prénom"),
-        ("email",            "Email"),
-        ("ville",            "Ville"),
-        ("pays",             "Pays"),
-        ("date_inscription", "Date d'inscription"),
-        ("statut",           "Statut (actif / inactif)"),
-    ],
-    "voyages": [
-        ("destination",      "Destination"),
-        ("pays_destination", "Pays de destination"),
-        ("continent",        "Continent"),
-        ("date_depart",      "Date de départ"),
-        ("date_retour",      "Date de retour"),
-        ("type_voyage",      "Type de voyage"),
-        ("transport",        "Moyen de transport"),
-        ("budget",           "Budget (€)"),
-        ("statut",           "Statut du voyage"),
-        ("note",             "Note (1 – 5)"),
-    ],
-}
 
 def is_date_col(col: str) -> bool:
     return "date" in col.lower()
+
 
 def build_date_value(year: int, month: int, day: int) -> str:
     if month == 0:   return f"{year:04d}"
     elif day == 0:   return f"{year:04d}-{month:02d}"
     else:            return f"{year:04d}-{month:02d}-{day:02d}"
 
-# ── State ──────────────────────────────────────────────────────────────────────
-for k, v in [("conditions",[]),("selected_table","clients"),
-             ("results",None),("enrich_count",None),
-             ("last_where",""),("last_params",[]),("editing",{}),
-             ("_selected_row_idx", None), ("expert_mode", False)]:
-    if k not in st.session_state:
-        st.session_state[k] = v
 
 # ══════════════════════════════════════════════════════════════════════════════
-# BINARY TREE + SQL
+# ARBRE BINAIRE & SQL
 # ══════════════════════════════════════════════════════════════════════════════
 def build_tree(conditions):
     if not conditions: return None
-    tree = {"type":"leaf","idx":0}
+    tree = {"type": "leaf", "idx": 0}
     for i in range(1, len(conditions)):
-        tree = {"type":"branch","op":conditions[i]["join_op"],
-                "left":tree,"right":{"type":"leaf","idx":i}}
+        tree = {"type": "branch", "op": conditions[i]["join_op"],
+                "left": tree, "right": {"type": "leaf", "idx": i}}
     return tree
+
 
 def _sql_from_tree(node, conditions, params, display):
     if node["type"] == "leaf":
@@ -255,75 +2623,278 @@ def _sql_from_tree(node, conditions, params, display):
         sym, fn = OPERATORS[c["operator"]]
         val = fn(c["value"])
         if display: return f"{c['column']} {sym} '{val}'"
-        params.append(val); return f"{c['column']} {sym} ?"
+        params.append(val)
+        return f"{c['column']} {sym} ?"
     sql_op = "AND" if node["op"] == "ET" else "OR"
     L = _sql_from_tree(node["left"],  conditions, params, display)
     R = _sql_from_tree(node["right"], conditions, params, display)
     return f"({L} {sql_op} {R})"
 
+
 def build_where(conditions, display=False):
-    """Returns (where_clause_str, params). If display=True params list is unused."""
     if not conditions: return "1=1", []
     params = []
     where = _sql_from_tree(build_tree(conditions), conditions, params, display)
     return where, params
 
-def build_query(table, conditions):
+
+def build_query(table, conditions, joins=None, schema=None):
     where, params = build_where(conditions)
-    return f"SELECT *\nFROM {table}\nWHERE {where}", params
 
-def build_query_display(table, conditions):
+    if joins and schema:
+        # Compter les occurrences de chaque nom de colonne
+        col_count: dict = {}
+        for t in [table] + [j["table"] for j in joins]:
+            for c in schema[t]["columns"]:
+                col_count[c] = col_count.get(c, 0) + 1
+
+        # SELECT explicite : alias table_col pour toute colonne ambiguë
+        parts = []
+        for t in [table] + [j["table"] for j in joins]:
+            for c in schema[t]["columns"]:
+                if col_count[c] > 1:
+                    parts.append(f"{t}.{c} AS {t}_{c}")
+                else:
+                    parts.append(f"{t}.{c}")
+        sql = "SELECT " + ", ".join(parts) + f"\nFROM {table}"
+    else:
+        sql = f"SELECT *\nFROM {table}"
+
+    for j in (joins or []):
+        sql += f"\n{j['type']} {j['table']} ON {j['on']}"
+    if where != "1=1":
+        sql += f"\nWHERE {where}"
+    return sql, params
+
+
+def build_query_display(table, conditions, joins=None, schema=None):
     where, _ = build_where(conditions, display=True)
-    if where == "1=1": return f"SELECT *\nFROM {table}"
-    return f"SELECT *\nFROM {table}\nWHERE {where}"
+
+    if joins and schema:
+        col_count: dict = {}
+        for t in [table] + [j["table"] for j in joins]:
+            for c in schema[t]["columns"]:
+                col_count[c] = col_count.get(c, 0) + 1
+        parts = []
+        for t in [table] + [j["table"] for j in joins]:
+            for c in schema[t]["columns"]:
+                parts.append(f"{t}.{c} AS {t}_{c}" if col_count[c] > 1 else f"{t}.{c}")
+        sql = "SELECT " + ", ".join(parts) + f"\nFROM {table}"
+    else:
+        sql = f"SELECT *\nFROM {table}"
+
+    for j in (joins or []):
+        sql += f"\n{j['type']} {j['table']} ON {j['on']}"
+    if where != "1=1":
+        sql += f"\nWHERE {where}"
+    return sql
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ENRICH helpers
+# JOINTURES  —  détection automatique via les clés étrangères
 # ══════════════════════════════════════════════════════════════════════════════
-def compute_enrich_count(table, where_clause, params):
-    """Returns int count of rows in the other table linked to current results."""
-    sql = ENRICH[table]["count_sql"].format(where=where_clause)
+def get_available_joins(schema: dict, base_table: str, current_joins: list) -> list:
+    """
+    Retourne les tables joignables (non encore utilisées) avec leur condition
+    ON auto-détectée à partir des clés étrangères du schéma.
+    """
+    already_used = {base_table} | {j["table"] for j in current_joins}
+    result, seen = [], set()
+    for candidate, info in schema.items():
+        if candidate in already_used or candidate in seen:
+            continue
+        for existing in already_used:
+            # FK d'une table existante → candidate
+            for fk in schema[existing].get("fk", []):
+                if fk["ref"] == candidate:
+                    result.append({
+                        "table":    candidate,
+                        "on":       f"{existing}.{fk['col']} = {candidate}.{fk['ref_col']}",
+                        "relation": f"{existing}.{fk['col']}  →  {candidate}.{fk['ref_col']}",
+                    })
+                    seen.add(candidate)
+                    break
+            if candidate in seen:
+                break
+            # FK du candidate → une table existante
+            for fk in info.get("fk", []):
+                if fk["ref"] == existing:
+                    result.append({
+                        "table":    candidate,
+                        "on":       f"{candidate}.{fk['col']} = {existing}.{fk['ref_col']}",
+                        "relation": f"{candidate}.{fk['col']}  →  {existing}.{fk['ref_col']}",
+                    })
+                    seen.add(candidate)
+                    break
+            if candidate in seen:
+                break
+    return result
+
+
+def get_all_columns(schema: dict, base_table: str, joins: list) -> list:
+    """Colonnes qualifiées (table.col) de la table de base + toutes les jointures."""
+    cols = [f"{base_table}.{c}" for c in schema[base_table]["columns"]]
+    for j in joins:
+        cols += [f"{j['table']}.{c}" for c in schema[j["table"]]["columns"]]
+    return cols
+
+
+def get_column_labels(schema: dict, base_table: str, joins: list) -> dict:
+    """
+    Retourne {col_key: label_affiché} pour le sélecteur de conditions.
+
+    • Sans jointure : col_key = "nom"          → label = "Nom"
+    • Avec jointure : col_key = "clients.nom"  → label = "Nom  (clients)"
+
+    Les labels sont lus depuis schema[table]["labels"] si présents,
+    sinon le nom technique de la colonne est utilisé tel quel.
+    """
+    has_joins = bool(joins)
+    result: dict = {}
+
+    for col in schema[base_table]["columns"]:
+        raw = schema[base_table].get("labels", {}).get(col, col)
+        key = f"{base_table}.{col}" if has_joins else col
+        result[key] = f"{raw}  ({base_table})" if has_joins else raw
+
+    for j in joins:
+        t = j["table"]
+        for col in schema[t]["columns"]:
+            raw = schema[t].get("labels", {}).get(col, col)
+            result[f"{t}.{col}"] = f"{raw}  ({t})"
+
+    return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CHARGEMENT DE LA CONFIGURATION EXTERNE (YAML ou TOML)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Chemin par défaut : config.yaml dans le même répertoire que ce fichier.
+# Changez en "config.toml" pour utiliser le format TOML.
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
+
+
+def _validate_config(data: dict) -> None:
+    """Lève ValueError si le fichier de config est mal formé."""
+    for key in ("schema", "enrich"):
+        if key not in data:
+            raise ValueError(f"Clé '{key}' manquante dans le fichier de config.")
+
+    schema = data["schema"]
+    for table, info in schema.items():
+        if "columns" not in info:
+            raise ValueError(f"schema.{table} : 'columns' manquant.")
+        if "pk" not in info:
+            raise ValueError(f"schema.{table} : 'pk' manquant.")
+        if info["pk"] not in info["columns"]:
+            raise ValueError(f"schema.{table} : pk '{info['pk']}' absent de columns.")
+        for fk in info.get("fk") or []:
+            for k in ("col", "ref", "ref_col"):
+                if k not in fk:
+                    raise ValueError(f"schema.{table}.fk : clé '{k}' manquante.")
+            if fk["ref"] not in schema:
+                raise ValueError(f"schema.{table}.fk : table '{fk['ref']}' inexistante.")
+
+
+@st.cache_data
+def _load_config_cached(path: str, mtime: float) -> dict:
+    """Lit et valide le fichier de config (cache invalidé automatiquement si mtime change)."""
+    with open(path, "rb") as fh:
+        raw = fh.read()
+
+    if path.endswith(".toml"):
+        try:
+            import tomllib                    # Python ≥ 3.11
+        except ImportError:
+            import tomli as tomllib           # pip install tomli  (Python < 3.11)
+        data = tomllib.loads(raw.decode("utf-8"))
+    else:
+        import yaml                           # pip install pyyaml
+        data = yaml.safe_load(raw)
+
+    # Normalise les fk: None → []
+    for info in data.get("schema", {}).values():
+        if info.get("fk") is None:
+            info["fk"] = []
+
+    _validate_config(data)
+    return data
+
+
+def load_config(path: str = CONFIG_PATH) -> dict:
+    """
+    Charge la config depuis un fichier YAML ou TOML.
+    Rechargement automatique dès que le fichier est modifié sur disque
+    (détecté via mtime à chaque rerun Streamlit).
+    """
     try:
-        conn = get_connection()
-        res = pd.read_sql_query(sql, conn, params=params)
+        mtime = os.path.getmtime(path)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"Fichier de config introuvable : {path}\n"
+            "Créez config.yaml (ou config.toml) dans le même répertoire que ce script."
+        )
+    return _load_config_cached(path, mtime)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HELPERS ENRICH  (enrich passé en paramètre pour éviter le global)
+# ══════════════════════════════════════════════════════════════════════════════
+def _find_col(df, *candidates: str):
+    """
+    Retourne le premier nom de colonne présent dans df parmi les candidats.
+    Robuste aux alias générés lors des jointures (ex. 'id' → 'clients_id').
+    Retourne None si aucun candidat n'existe.
+    """
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+def compute_enrich_count(table, where_clause, params, enrich):
+    sql = enrich[table]["count_sql"].format(where=where_clause)
+    try:
+        res = _get_db().read_sql(sql, params)
         return int(res["total"].iloc[0])
     except Exception:
         return None
 
-def run_enrich_query(table, where_clause, params):
-    """Returns enriched DataFrame (JOIN with the other table)."""
-    sql = ENRICH[table]["select_sql"].format(where=where_clause)
-    conn = get_connection()
-    return pd.read_sql_query(sql, conn, params=params)
+
+def run_enrich_query(table, where_clause, params, enrich):
+    sql = enrich[table]["select_sql"].format(where=where_clause)
+    return _get_db().read_sql(sql, params)
+
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TREE RENDERER
+# RENDU DE L'ARBRE  (aucune référence aux constantes métier)
 # ══════════════════════════════════════════════════════════════════════════════
 BRANCH_STYLES = {
-    "ET": {"color":"#fca5a5","bg":"#450a0a","border":"#991b1b"},
-    "OU": {"color":"#93c5fd","bg":"#172554","border":"#1d4ed8"},
+    "ET": {"color": "#fca5a5", "bg": "#450a0a", "border": "#991b1b"},
+    "OU": {"color": "#93c5fd", "bg": "#172554", "border": "#1d4ed8"},
 }
 NEUTRAL = "#475569"
 
 OP_NATURAL = {
-    "Contient":"contient","Commence par":"commence par","Finit par":"finit par",
-    "Égal à":"est","Différent de":"n'est pas","Supérieur à":">","Inférieur à":"<",
+    "Contient": "contient", "Commence par": "commence par", "Finit par": "finit par",
+    "Égal à": "est", "Différent de": "n'est pas", "Supérieur à": ">", "Inférieur à": "<",
 }
+
 
 def _date_label(val):
     p = val.split("-")
     try:
-        if len(p)==1: return f"année {p[0]}"
-        if len(p)==2: return f"{MONTHS_FR[int(p[1])]} {p[0]}"
+        if len(p) == 1: return f"année {p[0]}"
+        if len(p) == 2: return f"{MONTHS_FR[int(p[1])]} {p[0]}"
         return f"{int(p[2])} {MONTHS_FR[int(p[1])]} {p[0]}"
-    except Exception: return val
+    except Exception:
+        return val
+
 
 def _leaf_html(conditions, idx):
-    c = conditions[idx]
-    # Utilise le label convivial si disponible (mode simplifié), sinon le nom de colonne
-    display_col = c.get("label") or c["column"]
+    c           = conditions[idx]
+    col_display = c.get("label", c["column"])   # label si dispo, sinon nom brut
     if c.get("is_date"):
-        return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{display_col}</b> "
+        return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{col_display}</b> "
                 f"<span style='color:#fbbf24;'>en</span> "
                 f"<span style='color:#86efac;'>{_date_label(c['value'])}</span></span>")
     if c.get("is_bulk"):
@@ -334,14 +2905,15 @@ def _leaf_html(conditions, idx):
         preview = " · ".join(f"«{v}»" for v in shown)
         suffix  = f" <span style='color:#64748b;font-size:.75rem;'>+{n-3} autres</span>" if n > 3 else ""
         return (f"<span class='t-leaf'>"
-                f"<b style='color:#a5f3fc;'>{display_col}</b> "
+                f"<b style='color:#a5f3fc;'>{col_display}</b> "
                 f"<span style='color:#fbbf24;'>{op_str}</span> "
                 f"<span style='color:#86efac;'>[{preview}{suffix}]</span>"
                 f"</span>")
     op_str = OP_NATURAL.get(c["operator"], c["operator"])
-    return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{display_col}</b> "
+    return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{col_display}</b> "
             f"<span style='color:#fbbf24;'>{op_str}</span> "
             f"<span style='color:#86efac;'>«\u202f{c['value']}\u202f»</span></span>")
+
 
 def _prefix_html(prefix_parts, connector, connector_color):
     spans = "".join(
@@ -352,8 +2924,8 @@ def _prefix_html(prefix_parts, connector, connector_color):
                   f"white-space:pre;color:{connector_color};'>{connector}</span>")
     return spans
 
+
 def _small_edit_button(idx):
-    """Petit bouton ✏️ discret positionné sur la feuille."""
     m = f"editbtn-{idx}"
     st.markdown(
         f'<div id="{m}"></div><style>'
@@ -370,8 +2942,8 @@ def _small_edit_button(idx):
         st.session_state.editing[idx] = "leaf"
         st.rerun()
 
+
 def _render_leaf_editor(conditions, idx):
-    """Formulaire d'édition inline affiché à la place de la feuille."""
     cond    = conditions[idx]
     is_date = cond.get("is_date", False)
     is_bulk = cond.get("is_bulk", False)
@@ -450,6 +3022,7 @@ def _render_leaf_editor(conditions, idx):
                 st.session_state.editing.pop(idx, None)
                 st.rerun()
 
+
 def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=False, parent_op=None):
     if prefix_parts is None: prefix_parts = []
     connector       = "" if is_root else ("└── " if is_last else "├── ")
@@ -460,9 +3033,7 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
     if node["type"] == "leaf":
         idx        = node["idx"]
         is_editing = st.session_state.editing.get(idx) == "leaf"
-
         if is_editing:
-            # Formulaire d'édition — même indentation que la feuille
             if ph:
                 w = max(prefix_len * 0.135, 0.35)
                 ca, cb = st.columns([w, max(9 - w, 1)])
@@ -473,7 +3044,6 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
             else:
                 _render_leaf_editor(conditions, idx)
         else:
-            # Feuille normale + petit bouton ✏️ discret
             leaf_h = _leaf_html(conditions, idx)
             if ph:
                 w = max(prefix_len * 0.135, 0.35)
@@ -494,7 +3064,7 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
         op, right_idx = node["op"], node["right"]["idx"]
         if ph:
             w = max(prefix_len * 0.135, 0.35)
-            ca, cb = st.columns([w, max(9-w, 1)])
+            ca, cb = st.columns([w, max(9 - w, 1)])
             ca.markdown(f"<div style='padding-top:8px;line-height:1;'>{ph}</div>", unsafe_allow_html=True)
             with cb: _branch_button(op, right_idx)
         else:
@@ -505,8 +3075,10 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
         _render_node(node["left"],  conditions, new_pfx, is_last=False, parent_op=op)
         _render_node(node["right"], conditions, new_pfx, is_last=True,  parent_op=op)
 
+
 def _branch_button(op, right_idx):
-    s = BRANCH_STYLES[op]; bg, color, border = s["bg"], s["color"], s["border"]
+    s = BRANCH_STYLES[op]
+    bg, color, border = s["bg"], s["color"], s["border"]
     m = f"tbtn-{right_idx}"
     st.markdown(
         f'<div id="{m}"></div><style>'
@@ -522,6 +3094,7 @@ def _branch_button(op, right_idx):
         st.session_state.conditions[right_idx]["join_op"] = "OU" if op == "ET" else "ET"
         st.rerun()
 
+
 def render_tree(conditions, table):
     st.markdown(
         f"<div class='tree-wrap'>"
@@ -534,605 +3107,744 @@ def render_tree(conditions, table):
     tree = build_tree(conditions)
     if tree is None:
         st.markdown("<p style='color:#4a5170;font-style:italic;font-size:.85rem;'>Aucune condition.</p>",
-                    unsafe_allow_html=True); return
+                    unsafe_allow_html=True)
+        return
     _render_node(tree, conditions, prefix_parts=[], is_last=True, is_root=True, parent_op=None)
 
+
 # ══════════════════════════════════════════════════════════════════════════════
-# PANEL INLINE (remplace @st.dialog — fiable dans toutes les versions Streamlit)
+# DIALOG  (lit tables/enrich via session_state pour rester compatible @st.dialog)
 # ══════════════════════════════════════════════════════════════════════════════
-def render_row_panel(df: "pd.DataFrame", row_idx: int) -> None:
-    """Panel affiché sous le tableau quand une ligne est sélectionnée."""
-    row     = df.iloc[row_idx]
-    cols    = list(df.columns)
+@st.dialog("🔎 Explorer cette valeur")
+def cell_filter_dialog(col_name, cell_value):
+    # Récupération de la config injectée par run_app
+    tables = st.session_state._app_tables
+    enrich = st.session_state._app_enrich
 
-    # Colonne et valeur actives (persistées via session_state)
-    col_key = f"panel_col_{row_idx}"
-    if col_key not in st.session_state:
-        st.session_state[col_key] = cols[0]
-
+    str_value = str(cell_value)
     st.markdown(
-        "<div style='background:#13151d;border:1px solid #6366f1;"
-        "border-radius:12px;padding:16px 20px;margin-top:12px;'>",
-        unsafe_allow_html=True,
-    )
+        f"<div style='background:#13151d;border:1px solid #1e2130;border-radius:10px;"
+        f"padding:12px 16px;margin-bottom:16px;'>"
+        f"<span style='color:#94a3b8;font-size:.72rem;text-transform:uppercase;"
+        f"letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Cellule sélectionnée</span><br>"
+        f"<span style='font-family:JetBrains Mono,monospace;font-size:.92rem;'>"
+        f"<b style='color:#a5f3fc;'>{col_name}</b>"
+        f" <span style='color:#fbbf24;'>=</span>"
+        f" <span style='color:#86efac;'>«{str_value}»</span></span></div>",
+        unsafe_allow_html=True)
 
-    # ── En-tête ────────────────────────────────────────────────────────────────
-    h1, h2 = st.columns([8, 1])
-    with h1:
-        st.markdown(
-            f"<span style='color:#94a3b8;font-size:.75rem;text-transform:uppercase;"
-            f"letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Ligne {row_idx} sélectionnée</span>",
-            unsafe_allow_html=True,
-        )
-    with h2:
-        if st.button("✕", key="panel_close", help="Fermer"):
-            st.session_state["_selected_row_idx"] = None
-            st.rerun()
-
-    # ── Valeurs de la ligne (badges cliquables) ────────────────────────────────
-    st.markdown("<div style='display:flex;flex-wrap:wrap;gap:6px;margin:10px 0;'>",
-                unsafe_allow_html=True)
-    badge_html = ""
-    for c in cols:
-        val = row[c]
-        is_active = (c == st.session_state.get(col_key))
-        bg    = "#1e3a5f" if is_active else "#1e293b"
-        border= "#6366f1" if is_active else "#334155"
-        color = "#a5f3fc" if is_active else "#94a3b8"
-        badge_html += (
-            f"<span style='background:{bg};border:1px solid {border};"
-            f"border-radius:6px;padding:3px 10px;font-size:.75rem;"
-            f"font-family:JetBrains Mono,monospace;cursor:pointer;'>"
-            f"<span style='color:{color};font-weight:600;'>{c}</span>"
-            f"<span style='color:#64748b;'> : </span>"
-            f"<span style='color:#e2e8f0;'>{val}</span></span>"
-        )
-    st.markdown(badge_html + "</div>", unsafe_allow_html=True)
-
-    # ── Sélecteurs ────────────────────────────────────────────────────────────
-    pc1, pc2, pc3 = st.columns([2, 2, 3])
-    with pc1:
-        # Colonne : label avec valeur
-        col_options = [f"{c} : {row[c]}" for c in cols]
-        cur_label   = f"{st.session_state[col_key]} : {row[st.session_state[col_key]]}"
-        sel_label   = st.selectbox(
-            "Colonne", col_options,
-            index=col_options.index(cur_label) if cur_label in col_options else 0,
-            key=f"panel_col_sel_{row_idx}",
-            label_visibility="collapsed",
-        )
-        sel_col = sel_label.split(" : ")[0]
-        st.session_state[col_key] = sel_col
-
-    with pc2:
-        sel_op = st.selectbox("Opérateur", OP_LABELS,
-                              key=f"panel_op_{row_idx}",
-                              label_visibility="collapsed")
-
-    with pc3:
-        tables_with_col = [t for t, tc in TABLES.items() if sel_col in tc]
-        sel_table = st.selectbox(
-            "Table",
-            tables_with_col,
-            index=tables_with_col.index(st.session_state.selected_table)
-                  if st.session_state.selected_table in tables_with_col else 0,
-            key=f"panel_tbl_{row_idx}",
-            label_visibility="collapsed",
-        )
-
-    # ── SQL preview ────────────────────────────────────────────────────────────
-    sel_val = str(row[sel_col])
-    sym, fn = OPERATORS[sel_op]
-    tv      = fn(sel_val)
+    tables_with_col = [t for t, cols in tables.items() if col_name in cols]
+    target_table = st.selectbox("Table cible", tables_with_col,
+        index=tables_with_col.index(st.session_state.selected_table)
+              if st.session_state.selected_table in tables_with_col else 0,
+        key="dlg_table")
+    op = st.selectbox("Opérateur", OP_LABELS, key="dlg_op")
+    sym, fn = OPERATORS[op]
+    tv = fn(str_value)
     st.markdown(
-        f"<div style='background:#0a0c12;border-left:3px solid #6366f1;"
-        f"border-radius:6px;padding:7px 12px;font-family:JetBrains Mono,monospace;"
-        f"font-size:.78rem;color:#a5f3fc;margin:8px 0;'>"
-        f"SELECT * FROM <b>{sel_table}</b> WHERE <b>{sel_col}</b>"
+        f"<div style='background:#0a0c12;border:1px solid #1e2130;border-left:3px solid #6366f1;"
+        f"border-radius:8px;padding:8px 14px;font-family:JetBrains Mono,monospace;"
+        f"font-size:.8rem;color:#a5f3fc;margin:8px 0 14px;'>"
+        f"SELECT * FROM <b>{target_table}</b> WHERE <b>{col_name}</b>"
         f" <span style='color:#fbbf24'>{sym}</span>"
         f" <span style='color:#86efac'>'{tv}'</span></div>",
-        unsafe_allow_html=True,
-    )
+        unsafe_allow_html=True)
 
-    # ── Boutons ────────────────────────────────────────────────────────────────
-    pb1, pb2, pb3 = st.columns(3)
+    if st.button("▶ Lancer la requête", width="stretch", type="primary", key="dlg_run"):
+        q = f"SELECT * FROM {target_table} WHERE {col_name} {sym} ?"
+        try:
+            st.session_state.results        = _get_db().read_sql(q, [tv])
+            st.session_state.selected_table = target_table
+            st.session_state.conditions     = [{"column": col_name, "operator": op,
+                                                 "value": str_value, "join_op": "ET"}]
+            where, params = build_where(st.session_state.conditions)
+            st.session_state.last_where     = where
+            st.session_state.last_params    = params
+            st.session_state.enrich_count   = compute_enrich_count(target_table, where, params, enrich)
+            st.session_state["_last_cell_click"] = None
+        except Exception as e:
+            st.error(f"Erreur SQL : {e}")
+            return
+        st.rerun()
 
-    with pb1:
-        if st.button("▶ Lancer la requête", key="panel_run",
-                     width="stretch", type="primary"):
-            conn = get_connection()
-            q    = f"SELECT * FROM {sel_table} WHERE {sel_col} {sym} ?"
+    ck = f"cnt_{target_table}__{col_name}__{op}__{str_value}"
+    if ck in st.session_state:
+        cnt = st.session_state[ck]
+        st.markdown(
+            f"<div style='background:#14532d;border:2px solid #16a34a;border-radius:8px;"
+            f"padding:12px;text-align:center;'>"
+            f"<span style='color:#86efac;font-size:.72rem;text-transform:uppercase;"
+            f"letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Résultats estimés</span><br>"
+            f"<span style='color:#4ade80;font-size:2.2rem;font-weight:800;"
+            f"font-family:JetBrains Mono,monospace;'>{cnt}</span>"
+            f"<span style='color:#86efac;font-size:.85rem;'> ligne(s)</span></div>",
+            unsafe_allow_html=True)
+    else:
+        if st.button("🔢 Estimer le nombre de résultats (COUNT)", width="stretch", key="dlg_count"):
+            q2 = f"SELECT COUNT(*) AS total FROM {target_table} WHERE {col_name} {sym} ?"
             try:
-                st.session_state.results        = pd.read_sql_query(q, conn, params=[tv])
-                st.session_state.selected_table = sel_table
-                st.session_state.conditions     = [{"column": sel_col, "operator": sel_op,
-                                                    "value": sel_val, "join_op": "ET",
-                                                    "is_date": False, "is_bulk": False}]
-                where, params = build_where(st.session_state.conditions)
-                st.session_state.last_where    = where
-                st.session_state.last_params   = params
-                st.session_state.enrich_count  = compute_enrich_count(sel_table, where, params)
-                st.session_state["_selected_row_idx"] = None
+                r2 = _get_db().read_sql(q2, [tv])
+                st.session_state[ck] = int(r2["total"].iloc[0])
             except Exception as e:
                 st.error(f"Erreur SQL : {e}")
             st.rerun()
 
-    count_key = f"panel_cnt_{sel_table}__{sel_col}__{sel_op}__{sel_val}"
-    with pb2:
-        if count_key in st.session_state:
-            cnt_val = st.session_state[count_key]
-            st.markdown(
-                f"<div style='background:#14532d;border:1.5px solid #16a34a;"
-                f"border-radius:8px;padding:8px;text-align:center;'>"
-                f"<div style='color:#4ade80;font-size:1.4rem;font-weight:800;"
-                f"font-family:JetBrains Mono,monospace;'>{cnt_val}</div>"
-                f"<div style='color:#86efac;font-size:.68rem;'>ligne(s)</div></div>",
-                unsafe_allow_html=True,
-            )
-        else:
-            if st.button("🔢 Compter", key="panel_count", width="stretch"):
-                conn = get_connection()
-                q    = f"SELECT COUNT(*) AS total FROM {sel_table} WHERE {sel_col} {sym} ?"
-                try:
-                    r = pd.read_sql_query(q, conn, params=[tv])
-                    st.session_state[count_key] = int(r["total"].iloc[0])
-                except Exception as e:
-                    st.error(f"Erreur : {e}")
-                st.rerun()
-
-    with pb3:
-        join = "ET"
-        if st.session_state.conditions:
-            join = st.radio("Lier", ["ET","OU"], horizontal=True,
-                            key=f"panel_join_{row_idx}", label_visibility="collapsed")
-        if st.button("➕ Ajouter à l'arbre", key="panel_add", width="stretch"):
-            st.session_state.conditions.append({
-                "column": sel_col, "operator": sel_op,
-                "value": sel_val, "join_op": join,
-                "is_date": False, "is_bulk": False,
-            })
-            st.session_state["_selected_row_idx"] = None
-            st.rerun()
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PAGE
-# ══════════════════════════════════════════════════════════════════════════════
-st.markdown("# 🔍 SQL Query Builder")
-st.markdown("<p style='color:#6b7280;margin-top:-14px;margin-bottom:20px;'>"
-            "Construisez vos requêtes SQL visuellement, sans écrire une ligne de code.</p>",
-            unsafe_allow_html=True)
-
-# ── Table selector ─────────────────────────────────────────────────────────────
-st.markdown("<span style='color:#94a3b8;font-size:.78rem;text-transform:uppercase;"
-            "letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Table source</span>",
-            unsafe_allow_html=True)
-t_cols = st.columns(len(TABLES))
-for i, tname in enumerate(TABLES):
-    is_active = (st.session_state.selected_table == tname)
-    m = f"tpill-{tname}"
-    t_cols[i].markdown(
-        f'<div id="{m}"></div><style>'
-        f"div.element-container:has(#{m}) + div.element-container button{{"
-        f"background:{'linear-gradient(135deg,#3b82f6,#7c3aed)' if is_active else '#1a1d27'}!important;"
-        f"color:{'#ffffff' if is_active else '#94a3b8'}!important;"
-        f"border:{'none' if is_active else '1px solid #2a2d3e'}!important;"
-        f"border-radius:20px!important;width:100%;font-size:.85rem!important;}}</style>",
-        unsafe_allow_html=True)
-    if t_cols[i].button(tname, key=f"tpill_{tname}", width="stretch"):
-        st.session_state.selected_table = tname
-        st.session_state.conditions     = []
-        st.session_state.results        = None
-        st.session_state.enrich_count   = None
+    st.divider()
+    st.markdown("<span style='color:#94a3b8;font-size:.8rem;'>Ou ajouter comme condition dans l'arbre :</span>",
+                unsafe_allow_html=True)
+    join = st.radio("Lier avec", ["ET", "OU"], horizontal=True, key="dlg_join") \
+        if st.session_state.conditions else "ET"
+    if st.button("➕ Ajouter à l'arbre", width="stretch", key="dlg_add"):
+        st.session_state.conditions.append({"column": col_name, "operator": op,
+                                             "value": str_value, "join_op": join})
         st.rerun()
 
-st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
-current_table = st.session_state.selected_table
-current_cols  = TABLES[current_table]
 
-# ── Add condition ──────────────────────────────────────────────────────────────
-hdr_l, hdr_r = st.columns([5, 3])
-with hdr_l:
-    st.markdown("### ➕ Ajouter une condition")
-with hdr_r:
-    st.markdown("<div style='padding-top:18px;'>", unsafe_allow_html=True)
-    expert_mode = st.toggle(
-        "🔧 Mode expert",
-        key="expert_mode",
-        help="**Mode simplifié** : colonnes essentielles avec libellés clairs\n\n"
-             "**Mode expert** : toutes les colonnes techniques disponibles",
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
+# ══════════════════════════════════════════════════════════════════════════════
+# HISTORIQUE
+# ══════════════════════════════════════════════════════════════════════════════
+MAX_HISTORY = 20
 
-# ── Résoudre les colonnes selon le mode ───────────────────────────────────────
-if expert_mode:
-    col_options   = current_cols               # noms techniques bruts
-    col_key       = "new_col_expert"
-    new_col_label = None                       # pas de label distinct en expert
-else:
-    simp          = SIMPLIFIED_COLS.get(current_table, [(c, c) for c in current_cols])
-    col_options   = [label for _, label in simp]
-    col_map       = {label: col for col, label in simp}   # label → col technique
-    col_key       = "new_col_simple"
 
-# ── Ligne de formulaire ────────────────────────────────────────────────────────
-fa, fb, fc, fd = st.columns([2, 2, 3, 1])
-with fa:
-    selected = st.selectbox("Colonne", col_options, key=col_key,
-                             label_visibility="collapsed")
-    if expert_mode:
-        new_col       = selected
-        new_col_label = selected          # en expert le label = nom technique
-    else:
-        new_col       = col_map.get(selected, selected)
-        new_col_label = selected          # label convivial
-
-with fb:
-    is_date = is_date_col(new_col)
-    if is_date:
-        st.markdown("<span style='color:#a78bfa;font-size:.78rem;'>📅 Colonne date</span>",
-                    unsafe_allow_html=True)
-    else:
-        new_op = st.selectbox("Opérateur", OP_LABELS, key="new_op",
-                               label_visibility="collapsed")
-with fc:
-    if is_date:
-        d1, d2, d3 = st.columns(3)
-        new_year  = d1.number_input("Année *", 1900, 2100, 2023, 1, key="new_year")
-        new_month = d2.number_input("Mois",    0,    12,   0,    1, key="new_month",
-                                    help="0 = non précisé")
-        new_day   = d3.number_input("Jour",    0,    31,   0,    1, key="new_day",
-                                    help="0 = non précisé")
-    else:
-        st.text_area(
-            "Valeur(s)",
-            key="new_val",
-            placeholder="Une valeur, ou plusieurs séparées par des virgules / sauts de ligne",
-            height=80,
-            label_visibility="collapsed",
+# ══════════════════════════════════════════════════════════════════════════════
+# HISTORIQUE  —  persisté dans la table SQL _app_history
+# ══════════════════════════════════════════════════════════════════════════════
+def _init_history_table(conn) -> None:
+    """Crée la table _app_history si elle n'existe pas encore."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS _app_history (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    TEXT    NOT NULL,
+            ts         TEXT    NOT NULL,
+            table_name TEXT    NOT NULL,
+            summary    TEXT    NOT NULL,
+            conds_json TEXT    NOT NULL,
+            row_count  INTEGER NOT NULL
         )
-with fd:
-    new_join = (st.radio("Lier", ["ET","OU"], horizontal=False, key="new_join",
-                          label_visibility="collapsed")
-                if st.session_state.conditions else "ET")
+    """)
+    conn.commit()
 
-btn_a, btn_b = st.columns([3, 1])
-with btn_a:
-    if st.button("➕ Ajouter la condition", width="stretch"):
-        if is_date:
-            st.session_state.conditions.append({
-                "column":   new_col,
-                "label":    new_col_label,
-                "operator": "Commence par",
-                "value":    build_date_value(int(new_year), int(new_month), int(new_day)),
-                "join_op":  new_join,
-                "is_date":  True,
-                "is_bulk":  False,
-            })
+
+def _db_push_history(conn, user_id: str, table: str,
+                     conditions: list, row_count: int) -> None:
+    """Insère ou met à jour la dernière entrée d'historique pour ce user."""
+    qd = build_query_display(table, conditions)
+    summary = qd.split("\nWHERE ", 1)[1] if "\nWHERE " in qd else "Tous les enregistrements"
+    ts = datetime.now().strftime("%d/%m %H:%M:%S")
+
+    # Dédoublonnage : même table + même WHERE → mise à jour
+    last = conn.execute(
+        "SELECT id, summary, table_name FROM _app_history "
+        "WHERE user_id=? ORDER BY id DESC LIMIT 1",
+        (user_id,)
+    ).fetchone()
+
+    if last and last[2] == table and last[1] == summary:
+        conn.execute(
+            "UPDATE _app_history SET ts=?, row_count=? WHERE id=?",
+            (ts, row_count, last[0])
+        )
+    else:
+        conn.execute(
+            "INSERT INTO _app_history "
+            "(user_id, ts, table_name, summary, conds_json, row_count) "
+            "VALUES (?,?,?,?,?,?)",
+            (user_id, ts, table, summary,
+             json.dumps(conditions, ensure_ascii=False), row_count)
+        )
+
+    # Borne à MAX_HISTORY entrées par user
+    conn.execute("""
+        DELETE FROM _app_history
+        WHERE user_id = ? AND id NOT IN (
+            SELECT id FROM _app_history
+            WHERE user_id = ? ORDER BY id DESC LIMIT ?
+        )
+    """, (user_id, user_id, MAX_HISTORY))
+    conn.commit()
+
+
+def _db_get_history(conn, user_id: str) -> list[dict]:
+    """Retourne les entrées d'historique du user, plus récentes en premier."""
+    rows = conn.execute(
+        "SELECT id, ts, table_name, summary, conds_json, row_count "
+        "FROM _app_history WHERE user_id=? ORDER BY id DESC",
+        (user_id,)
+    ).fetchall()
+    return [
+        {
+            "id":         r[0],
+            "ts":         r[1],
+            "table":      r[2],
+            "summary":    r[3],
+            "conditions": json.loads(r[4]),
+            "row_count":  r[5],
+        }
+        for r in rows
+    ]
+
+
+def _render_history_popover(conn, user_id: str, enrich: dict) -> None:
+    """Bouton popover top-right avec la liste des requêtes passées."""
+    history = _db_get_history(conn, user_id)
+    n       = len(history)
+    label   = f"🕐  {n}" if n else "🕐"
+
+    with st.popover(label, use_container_width=True):
+        st.markdown(
+            "<span style='color:#94a3b8;font-size:.72rem;text-transform:uppercase;"
+            "letter-spacing:1px;font-family:JetBrains Mono,monospace;'>"
+            f"Historique ({n} / {MAX_HISTORY})  —  user {user_id}</span>",
+            unsafe_allow_html=True)
+
+        if not history:
+            st.markdown(
+                "<p style='color:#4a5170;font-style:italic;font-size:.82rem;"
+                "margin-top:6px;'>Aucune requête exécutée.</p>",
+                unsafe_allow_html=True)
+            return
+
+        for entry in history:
+            n_rows  = entry["row_count"]
+            summ_d  = (entry["summary"][:160] + "…") \
+                      if len(entry["summary"]) > 160 else entry["summary"]
+
+            st.markdown(
+                f"<div style='background:#13151d;border:1px solid #1e2130;"
+                f"border-radius:10px;padding:10px 12px;margin-bottom:8px;'>"
+                f"<div style='display:flex;justify-content:space-between;"
+                f"align-items:center;margin-bottom:5px;'>"
+                f"<span style='font-family:JetBrains Mono,monospace;"
+                f"font-size:.72rem;color:#6366f1;font-weight:600;'>"
+                f"{entry['table']}</span>"
+                f"<span style='font-size:.7rem;color:#475569;'>{entry['ts']}</span>"
+                f"</div>"
+                f"<div style='font-family:JetBrains Mono,monospace;font-size:.72rem;"
+                f"color:#a5f3fc;white-space:pre-wrap;word-break:break-word;"
+                f"line-height:1.55;margin-bottom:7px;'>{summ_d}</div>"
+                f"<span style='font-size:.7rem;color:#4ade80;'>"
+                f"{n_rows} ligne{'s' if n_rows != 1 else ''}</span>"
+                f"</div>",
+                unsafe_allow_html=True)
+
+            if st.button("↩ Relancer", key=f"hist_replay_{entry['id']}",
+                         use_container_width=True):
+                st.session_state.selected_table      = entry["table"]
+                st.session_state.conditions          = copy.deepcopy(entry["conditions"])
+                st.session_state.results             = None
+                st.session_state.enrich_count        = None
+                st.session_state["_last_cell_click"] = None
+                st.session_state["_auto_execute"]    = True
+                st.rerun()
+
+        st.divider()
+        if st.button("🗑 Vider mon historique", key="hist_clear",
+                     use_container_width=True):
+            conn.execute("DELETE FROM _app_history WHERE user_id=?", (user_id,))
+            conn.commit()
             st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POINT D'ENTRÉE UNIQUE
+# ══════════════════════════════════════════════════════════════════════════════
+def run_app(schema: dict, enrich: dict):
+    """
+    Lance l'application SQL Query Builder.
+
+    Paramètres
+    ----------
+    schema : dict
+        { nom_table: { "columns": [...], "pk": str, "fk": [...] } }
+        fk  =  [ { "col": str, "ref": nom_table, "ref_col": str } ]
+
+    enrich : dict
+        Dictionnaire de jointure enrichissement (inchangé).
+    """
+    tables = {t: d["columns"] for t, d in schema.items()}
+    # ── Injection de la config pour le dialog ─────────────────────────────────
+    st.session_state._app_tables = tables
+    st.session_state._app_enrich = enrich
+
+    # ── Initialisation de l'état ──────────────────────────────────────────────
+    default_table = next(iter(tables))
+    for k, v in [("conditions", []), ("selected_table", default_table),
+                 ("results", None), ("enrich_count", None),
+                 ("last_where", ""), ("last_params", []), ("editing", {}),
+                 ("joins", [])]:
+        if k not in st.session_state:
+            st.session_state[k] = v
+
+    # ── User ID + table SQL historique ────────────────────────────────────────
+    conn    = get_connection()
+    user_id = st.session_state.setdefault("user_id", str(uuid.uuid4())[:8])
+    _init_history_table(conn)
+
+    # ── Auto-exécution : relance depuis le popover historique ─────────────────
+    if st.session_state.pop("_auto_execute", False):
+        _q, _p = build_query(st.session_state.selected_table, st.session_state.conditions,
+                             st.session_state.joins, schema)
+        try:
+            _res = _get_db().read_sql(_q, _p)
+            st.session_state.results = _res
+            _w, _wp = build_where(st.session_state.conditions)
+            st.session_state.last_where   = _w
+            st.session_state.last_params  = _wp
+            st.session_state.enrich_count = compute_enrich_count(
+                st.session_state.selected_table, _w, _wp, enrich)
+            _db_push_history(conn, user_id, st.session_state.selected_table,
+                             st.session_state.conditions, len(_res))
+        except Exception as _e:
+            st.error(f"Erreur SQL (relance) : {_e}")
+
+    # ── En-tête + popover historique (top-right) ──────────────────────────────
+    col_hdr, col_cfg, col_pop = st.columns([5, 2, 1], vertical_alignment="bottom")
+    with col_hdr:
+        st.markdown("# 🔍 SQL Query Builder")
+        st.markdown("<p style='color:#6b7280;margin-top:-14px;margin-bottom:20px;'>"
+                    "Construisez vos requêtes SQL visuellement, sans écrire une ligne de code.</p>",
+                    unsafe_allow_html=True)
+    with col_cfg:
+        db_label = _get_db().label
+        st.markdown(
+            f"<div style='text-align:right;padding-bottom:2px;'>"
+            f"<span style='font-size:.68rem;color:#4ade80;"
+            f"font-family:JetBrains Mono,monospace;'>🟢 {db_label}</span></div>",
+            unsafe_allow_html=True)
+        disc_col, cfg_col = st.columns(2)
+        with disc_col:
+            if st.button("⏏", key="db_disconnect", help="Changer de base de données",
+                         use_container_width=True):
+                st.session_state.pop("_db_adapter", None)
+                st.session_state.pop("_db_schema_override", None)
+                st.session_state["results"] = None
+                st.cache_data.clear()
+                st.rerun()
+        with cfg_col:
+            cfg_name = os.path.basename(CONFIG_PATH)
+            st.markdown(
+                f"<div style='text-align:right;padding-bottom:2px;'>"
+                f"<span style='font-size:.68rem;color:#475569;"
+                f"font-family:JetBrains Mono,monospace;'>⚙ {cfg_name}</span></div>",
+                unsafe_allow_html=True)
+            if st.button("↺", key="cfg_reload", help=f"Recharger {CONFIG_PATH}",
+                         use_container_width=True):
+                st.cache_data.clear()
+                st.rerun()
+    with col_pop:
+        _render_history_popover(conn, user_id, enrich)
+
+    # ── Navigation principale ──────────────────────────────────────────────────
+    app_mode = st.session_state.get("app_mode", "query")
+    _nav_pills = {"query": "🔍  Requêtes", "map": "🗺️  Carte", "personnel": "👥  Personnel"}
+    nav_cols = st.columns(len(_nav_pills) + 5)
+    for i, (mode_key, mode_label) in enumerate(_nav_pills.items()):
+        is_active = (app_mode == mode_key)
+        m_id = f"navpill-{mode_key}"
+        nav_cols[i].markdown(
+            f'<div id="{m_id}"></div><style>'
+            f"div.element-container:has(#{m_id}) + div.element-container button{{"
+            f"background:{'linear-gradient(135deg,#3b82f6,#7c3aed)' if is_active else '#1a1d27'}!important;"
+            f"color:{'#ffffff' if is_active else '#94a3b8'}!important;"
+            f"border:{'none' if is_active else '1px solid #2a2d3e'}!important;"
+            f"border-radius:20px!important;font-size:.85rem!important;}}</style>",
+            unsafe_allow_html=True)
+        if nav_cols[i].button(mode_label, key=f"nav_{mode_key}", use_container_width=True):
+            st.session_state["app_mode"] = mode_key
+            st.rerun()
+    st.markdown("<div style='margin-bottom:4px'></div>", unsafe_allow_html=True)
+
+    # ── Dispatch selon le mode ─────────────────────────────────────────────────
+    if app_mode == "map":
+        render_map_module()
+        return
+    if app_mode == "personnel":
+        render_personnel_module()
+        return
+
+    # ── Sélecteur de table ────────────────────────────────────────────────────
+    st.markdown("<span style='color:#94a3b8;font-size:.78rem;text-transform:uppercase;"
+                "letter-spacing:1px;font-family:JetBrains Mono,monospace;'>Table source</span>",
+                unsafe_allow_html=True)
+    t_cols = st.columns(len(tables))
+    for i, tname in enumerate(tables):
+        is_active = (st.session_state.selected_table == tname)
+        m = f"tpill-{tname}"
+        t_cols[i].markdown(
+            f'<div id="{m}"></div><style>'
+            f"div.element-container:has(#{m}) + div.element-container button{{"
+            f"background:{'linear-gradient(135deg,#3b82f6,#7c3aed)' if is_active else '#1a1d27'}!important;"
+            f"color:{'#ffffff' if is_active else '#94a3b8'}!important;"
+            f"border:{'none' if is_active else '1px solid #2a2d3e'}!important;"
+            f"border-radius:20px!important;width:100%;font-size:.85rem!important;}}</style>",
+            unsafe_allow_html=True)
+        if t_cols[i].button(tname, key=f"tpill_{tname}", width="stretch"):
+            st.session_state.selected_table = tname
+            st.session_state.conditions     = []
+            st.session_state.results        = None
+            st.session_state.enrich_count   = None
+            st.session_state.joins          = []
+            st.rerun()
+
+    st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
+    current_table = st.session_state.selected_table
+
+    # ── Jointures ─────────────────────────────────────────────────────────────
+    available_joins = get_available_joins(schema, current_table, st.session_state.joins)
+
+    if st.session_state.joins or available_joins:
+        st.markdown("### 🔗 Jointures")
+
+        # Jointures actives
+        for i, j in enumerate(st.session_state.joins):
+            jc, jd = st.columns([10, 1])
+            with jc:
+                st.markdown(
+                    f"<div style='background:#0f111a;border:1px solid #1e2130;"
+                    f"border-radius:10px;padding:9px 16px;font-family:JetBrains Mono,monospace;"
+                    f"font-size:.8rem;'>"
+                    f"<span style='color:#6366f1;font-weight:600;'>{current_table}</span>"
+                    f"<span style='color:#475569;'> ─ {j['type']} ─▶ </span>"
+                    f"<span style='color:#6366f1;font-weight:600;'>{j['table']}</span>"
+                    f"<span style='color:#475569;'>  ON  </span>"
+                    f"<span style='color:#a5f3fc;'>{j['on']}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True)
+            with jd:
+                if st.button("✕", key=f"del_join_{i}", help="Supprimer cette jointure"):
+                    st.session_state.joins.pop(i)
+                    st.session_state.conditions = []
+                    st.session_state.results    = None
+                    st.rerun()
+
+        # Ajouter une jointure
+        if available_joins:
+            opts   = {j["table"]: j for j in available_joins}
+            labels = list(opts.keys())
+            with st.expander("➕  Ajouter une jointure", expanded=not st.session_state.joins):
+                ja, jb = st.columns([3, 2])
+                with ja:
+                    sel_tbl = st.selectbox("Table", labels, key="new_join_table",
+                                           label_visibility="collapsed")
+                with jb:
+                    join_type = st.selectbox("Type", ["LEFT JOIN", "INNER JOIN"],
+                                             key="new_join_type", label_visibility="collapsed")
+                j_info = opts[sel_tbl]
+                st.markdown(
+                    f"<div style='background:#0a0c12;border:1px solid #1e2130;"
+                    f"border-left:3px solid #6366f1;border-radius:8px;"
+                    f"padding:8px 14px;font-family:JetBrains Mono,monospace;"
+                    f"font-size:.78rem;color:#a5f3fc;margin:6px 0 4px;'>"
+                    f"ON  {j_info['on']}</div>",
+                    unsafe_allow_html=True)
+                st.caption(f"🔑 Relation détectée : {j_info['relation']}")
+                if st.button("✓ Confirmer la jointure", type="primary", width="stretch"):
+                    st.session_state.joins.append({
+                        "table": sel_tbl, "type": join_type, "on": j_info["on"]
+                    })
+                    st.session_state.conditions = []
+                    st.session_state.results    = None
+                    st.rerun()
+
+        st.markdown("---")
+
+    # Colonnes disponibles : qualifiées (table.col) si jointures actives
+    if st.session_state.joins:
+        current_cols = get_all_columns(schema, current_table, st.session_state.joins)
+    else:
+        current_cols = tables[current_table]
+
+    # ── Ajout de condition ────────────────────────────────────────────────────
+    # Labels lisibles pour le sélecteur de colonnes
+    col_labels_map = get_column_labels(schema, current_table, st.session_state.joins)
+
+    st.markdown("### ➕ Ajouter une condition")
+    fa, fb, fc, fd = st.columns([2, 2, 3, 1])
+    with fa:
+        new_col = st.selectbox(
+            "Colonne", current_cols, key="new_col", label_visibility="collapsed",
+            format_func=lambda c: col_labels_map.get(c, c),
+        )
+    with fb:
+        is_date = is_date_col(new_col)
+        if is_date:
+            st.markdown("<span style='color:#a78bfa;font-size:.78rem;'>📅 Colonne date</span>",
+                        unsafe_allow_html=True)
         else:
-            raw    = st.session_state.get("new_val", "")
-            values = [v.strip() for v in re.split(r"[,\n]", raw) if v.strip()]
-            if not values:
-                st.warning("Veuillez entrer au moins une valeur.")
-            elif len(values) == 1:
+            new_op = st.selectbox("Opérateur", OP_LABELS, key="new_op", label_visibility="collapsed")
+    with fc:
+        if is_date:
+            d1, d2, d3 = st.columns(3)
+            new_year  = d1.number_input("Année *", 1900, 2100, 2023, 1, key="new_year")
+            new_month = d2.number_input("Mois",    0,    12,   0,    1, key="new_month", help="0 = non précisé")
+            new_day   = d3.number_input("Jour",    0,    31,   0,    1, key="new_day",   help="0 = non précisé")
+        else:
+            st.text_area("Valeur(s)", key="new_val",
+                         placeholder="Une valeur, ou plusieurs séparées par des virgules / sauts de ligne",
+                         height=80, label_visibility="collapsed")
+    with fd:
+        new_join = (st.radio("Lier", ["ET", "OU"], horizontal=False, key="new_join",
+                             label_visibility="collapsed")
+                    if st.session_state.conditions else "ET")
+
+    btn_a, btn_b = st.columns([3, 1])
+    with btn_a:
+        if st.button("➕ Ajouter la condition", width="stretch"):
+            _new_label = col_labels_map.get(new_col, new_col)
+            if is_date:
                 st.session_state.conditions.append({
-                    "column":   new_col,
-                    "label":    new_col_label,
-                    "operator": new_op,
-                    "value":    values[0],
-                    "join_op":  new_join,
-                    "is_date":  False,
-                    "is_bulk":  False,
+                    "column": new_col, "label": _new_label,
+                    "operator": "Commence par",
+                    "value":  build_date_value(int(new_year), int(new_month), int(new_day)),
+                    "join_op": new_join, "is_date": True,
                 })
                 st.rerun()
             else:
-                st.session_state.conditions.append({
-                    "column":   new_col,
-                    "label":    new_col_label,
-                    "operator": new_op,
-                    "value":    ", ".join(values),
-                    "values":   values,
-                    "join_op":  new_join,
-                    "is_date":  False,
-                    "is_bulk":  True,
-                })
-                st.rerun()
-with btn_b:
-    if st.button("🗑 Effacer", width="stretch"):
-        st.session_state.conditions   = []
-        st.session_state.results      = None
-        st.session_state.enrich_count = None
-        st.rerun()
+                raw    = st.session_state.get("new_val", "")
+                values = [v.strip() for v in re.split(r"[,\n]", raw) if v.strip()]
+                if not values:
+                    st.warning("Veuillez entrer au moins une valeur.")
+                elif len(values) == 1:
+                    st.session_state.conditions.append({
+                        "column": new_col, "label": _new_label,
+                        "operator": new_op,
+                        "value": values[0], "join_op": new_join,
+                        "is_date": False, "is_bulk": False,
+                    })
+                    st.rerun()
+                else:
+                    st.session_state.conditions.append({
+                        "column": new_col, "label": _new_label,
+                        "operator": new_op,
+                        "value": ", ".join(values), "values": values,
+                        "join_op": new_join, "is_date": False, "is_bulk": True,
+                    })
+                    st.rerun()
+    with btn_b:
+        if st.button("🗑 Effacer", width="stretch"):
+            st.session_state.conditions   = []
+            st.session_state.results      = None
+            st.session_state.enrich_count = None
+            st.rerun()
 
-st.markdown("---")
+    st.markdown("---")
 
-# ── Tree + SQL expander ────────────────────────────────────────────────────────
-col_tree, col_sql = st.columns([3, 2], gap="large")
-with col_tree:
-    st.markdown("### 🌳 Arbre de décision")
-    st.caption("Cliquez sur un nœud ET / OU pour le basculer.")
-    render_tree(st.session_state.conditions, current_table)
-with col_sql:
-    with st.expander("🧾 Voir la requête SQL générée", expanded=False):
-        st.markdown(f"<div class='sql-display'>{build_query_display(current_table, st.session_state.conditions)}</div>",
-                    unsafe_allow_html=True)
-    st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
-    if st.button("▶ Exécuter la requête", width="stretch", type="primary"):
-        conn = get_connection()
-        q, params = build_query(current_table, st.session_state.conditions)
-        try:
-            st.session_state.results = pd.read_sql_query(q, conn, params=params)
-            where, wparams = build_where(st.session_state.conditions)
-            st.session_state.last_where   = where
-            st.session_state.last_params  = wparams
-            st.session_state.enrich_count = compute_enrich_count(current_table, where, wparams)
-        except Exception as e:
-            st.error(f"Erreur SQL : {e}")
+    # ── Arbre + requête SQL ───────────────────────────────────────────────────
+    col_tree, col_sql = st.columns([3, 2], gap="large")
+    with col_tree:
+        st.markdown("### 🌳 Arbre de décision")
+        st.caption("Cliquez sur un nœud ET / OU pour le basculer.")
+        render_tree(st.session_state.conditions, current_table)
+    with col_sql:
+        with st.expander("🧾 Voir la requête SQL générée", expanded=False):
+            st.markdown(f"<div class='sql-display'>"
+                        f"{build_query_display(current_table, st.session_state.conditions, st.session_state.joins, schema)}"
+                        f"</div>", unsafe_allow_html=True)
+        st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
+        if st.button("▶ Exécuter la requête", width="stretch", type="primary"):
+            q, params = build_query(current_table, st.session_state.conditions, st.session_state.joins, schema)
+            try:
+                results = _get_db().read_sql(q, params)
+                st.session_state.results = results
+                where, wparams = build_where(st.session_state.conditions)
+                st.session_state.last_where   = where
+                st.session_state.last_params  = wparams
+                st.session_state.enrich_count = compute_enrich_count(current_table, where, wparams, enrich)
+                st.session_state["_last_cell_click"] = None
+                _db_push_history(conn, user_id, current_table,
+                                 st.session_state.conditions, len(results))
+                st.rerun()  # le popover (rendu en haut) relit la DB avec la nouvelle entrée
+            except Exception as e:
+                st.error(f"Erreur SQL : {e}")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# RESULTS
-# ══════════════════════════════════════════════════════════════════════════════
-if st.session_state.results is not None:
-    df  = st.session_state.results
-    cnt = st.session_state.enrich_count
-    other_table = ENRICH[current_table]["label"]
+    # ══════════════════════════════════════════════════════════════════════════
+    # RÉSULTATS
+    # ══════════════════════════════════════════════════════════════════════════
+    if st.session_state.results is None:
+        return
+
+    df          = st.session_state.results
+    cnt         = st.session_state.enrich_count
+    other_table = enrich[current_table]["label"]
 
     st.markdown("---")
     st.markdown("### 📊 Résultats")
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("Lignes", len(df))
-    m2.metric("Colonnes", len(df.columns))
+    m1.metric("Lignes",     len(df))
+    m2.metric("Colonnes",   len(df.columns))
     m3.metric("Conditions", len(st.session_state.conditions))
 
     if len(df) == 0:
         st.info("Aucun résultat ne correspond à vos critères.")
     else:
-        # ── column presence flags ──────────────────────────────────────────────
-        has_nom        = "nom"         in df.columns
-        has_prenom     = "prenom"      in df.columns
-        has_dest       = "destination" in df.columns
-        has_depart     = "date_depart" in df.columns
-        has_budget     = "budget"      in df.columns
-        has_note       = "note"        in df.columns
-        has_continent  = "continent"   in df.columns
-        has_type       = "type_voyage" in df.columns
-        has_duree      = "duree_jours" in df.columns
-        has_statut_v   = "statut_voyage" in df.columns
-        has_client_nom = "client_nom"  in df.columns
-        has_ville      = "ville"       in df.columns
-        has_client_id  = "client_id"   in df.columns
+        # ── Flags de colonnes présentes ───────────────────────────────────────
+        has_nom        = "nom"           in df.columns
+        has_prenom     = "prenom"        in df.columns
+        has_dest       = "destination"   in df.columns
+        has_depart     = "date_depart"   in df.columns
+        has_budget     = "budget"        in df.columns
+        has_note       = "note"          in df.columns
+        has_continent  = "continent"     in df.columns
+        has_type       = "type_voyage"   in df.columns
+        has_duree      = "duree_jours"   in df.columns
+        has_client_nom = "client_nom"    in df.columns
+        has_ville      = "ville"         in df.columns
+        has_client_id  = "client_id"     in df.columns
 
-        # ── continent color palette ────────────────────────────────────────────
-        CONT_COLORS = {
-            "Asie":"#f59e0b","Europe":"#3b82f6","Amérique":"#10b981",
-            "Afrique":"#ef4444","Océanie":"#8b5cf6",
-        }
-        TYPE_COLORS = {
-            "Tourisme":"#3b82f6","Affaires":"#8b5cf6","Détente":"#10b981",
-            "Lune de miel":"#f472b6","Safari":"#f59e0b","Aventure":"#ef4444",
-            "Luxe":"#fbbf24","City Break":"#06b6d4","Culturel":"#a78bfa",
-            "Plage":"#22d3ee","Romantique":"#fb7185",
-        }
+        tab1, tab2, tab3, tab4 = st.tabs(["📋 Grille", "👤 Fiches", "🗓 Timeline", "📈 Statistiques"])
 
-        # ── Animation clignotante — uniquement les onglets avec nouvelles données ──
-        _hl_until   = st.session_state.get("_enrich_hl_until", 0)
-        _blink_tabs = st.session_state.get("_blink_tabs", set())
-        _do_blink   = time.time() < _hl_until and bool(_blink_tabs)
-        if _do_blink:
-            # Construire le sélecteur CSS uniquement pour les nth-child ciblés
-            selectors = ", ".join(
-                f"div[data-testid='stTabsTabList'] button[role='tab']:nth-child({n})"
-                for n in sorted(_blink_tabs)
-            )
-            st.markdown(f"""
-<style>
-@keyframes tab-pulse {{
-    0%   {{ color: inherit; text-shadow: none; }}
-    40%  {{ color: #4ade80 !important;
-           text-shadow: 0 0 8px #4ade80, 0 0 16px #16a34a; }}
-    100% {{ color: inherit; text-shadow: none; }}
-}}
-{selectors} {{
-    animation: tab-pulse 0.9s ease-in-out infinite;
-}}
-div[data-testid="stTabsTabList"] button[role="tab"][aria-selected="true"] {{
-    animation: none !important;
-    color: inherit !important;
-}}
-</style>
-""", unsafe_allow_html=True)
-
-        tab1, tab2, tab3, tab4 = st.tabs(
-            ["📋 Grille", "👤 Fiches", "🗓 Timeline", "📈 Statistiques"]
-        )
-
-        # ══════════════════════════════════════════════════════════════════════
-        # TAB 1 — Grille
-        # ══════════════════════════════════════════════════════════════════════
+        # ── TAB 1 — Grille ────────────────────────────────────────────────────
         with tab1:
-            st.caption("💡 Cliquez sur une ligne pour explorer ses valeurs et créer un filtre.")
-            event = st.dataframe(df, width="stretch", hide_index=True,
-                                 on_select="rerun", selection_mode="single-row",
-                                 key="result_df")
-            sel    = event.selection if hasattr(event, "selection") else {}
-            rows_s = sel.get("rows", [])
-            if rows_s:
-                st.session_state["_selected_row_idx"] = int(rows_s[0])
-            elif not rows_s and st.session_state.get("_selected_row_idx") is not None:
-                # L'utilisateur a désélectionné la ligne
-                st.session_state["_selected_row_idx"] = None
+            st.caption("💡 Cliquez sur une cellule pour explorer sa valeur.")
+            event  = st.dataframe(df, width="stretch", hide_index=True,
+                                  on_select="rerun", selection_mode=["single-row", "single-column"],
+                                  key="result_df")
+            sel    = getattr(event, "selection", None)
+            rows_s = list(getattr(sel, "rows",    None) or (sel or {}).get("rows",    []))
+            cols_s = list(getattr(sel, "columns", None) or (sel or {}).get("columns", []))
+            if rows_s and cols_s:
+                col_ref  = cols_s[0]
+                col_name = col_ref if isinstance(col_ref, str) else df.columns[int(col_ref)]
+                row_idx  = int(rows_s[0])
+                try:
+                    cell_val = df.iloc[row_idx][col_name]
+                except KeyError:
+                    cell_val = df.iloc[row_idx, df.columns.get_loc(col_name)]
+                click_sig = f"{row_idx}__{col_name}__{cell_val}"
+                if click_sig != st.session_state.get("_last_cell_click"):
+                    st.session_state["_last_cell_click"]     = click_sig
+                    st.session_state["_cell_dialog_pending"] = (col_name, cell_val)
             st.download_button("⬇ Télécharger CSV",
                 df.to_csv(index=False).encode("utf-8"),
                 f"resultats_{current_table}.csv", "text/csv")
 
-        # ── Panel de filtrage — affiché sous les tabs (hors contexte tab) ─────
-        row_idx_panel = st.session_state.get("_selected_row_idx")
-        if row_idx_panel is not None and row_idx_panel < len(df):
-            render_row_panel(df, row_idx_panel)
-
-        # ══════════════════════════════════════════════════════════════════════
-        # TAB 2 — Fiches
-        # ══════════════════════════════════════════════════════════════════════
+        # ── TAB 2 — Fiches ────────────────────────────────────────────────────
         with tab2:
-            # ── Case A : données enrichies (clients + voyages) ─────────────
-            if has_nom and has_prenom and has_dest:
-                key_id = "id"
-                client_groups = df.groupby(key_id, sort=False)
-                for client_id, group in client_groups:
-                    row0 = group.iloc[0]
-                    initials = (str(row0.get("prenom","?"))[:1] +
-                                str(row0.get("nom","?"))[:1]).upper()
-                    ville_txt   = row0.get("ville","")
-                    statut_txt  = row0.get("statut","")
-                    stat_color  = "#4ade80" if statut_txt == "actif" else "#f87171"
-                    n_voyages   = len(group)
-                    budget_tot  = group["budget"].sum() if has_budget else 0
+            _id_col     = _find_col(df, "id", "clients_id")
+            _statut_col = _find_col(df, "statut", "clients_statut")
 
-                    card_html = (
-                        f"<div style='background:#13151d;border:1px solid #1e2130;"
-                        f"border-radius:12px;padding:16px 20px;margin-bottom:16px;'>"
-                        f"<div style='display:flex;align-items:center;gap:14px;margin-bottom:12px;'>"
-                        f"<div style='width:44px;height:44px;border-radius:50%;"
-                        f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
-                        f"display:flex;align-items:center;justify-content:center;"
-                        f"font-weight:700;font-size:1rem;color:white;flex-shrink:0;'>{initials}</div>"
-                        f"<div>"
-                        f"<div style='font-weight:700;font-size:1rem;color:#e8eaf0;'>"
-                        f"{row0.get('prenom','')} {row0.get('nom','')}</div>"
-                        f"<div style='color:#64748b;font-size:.82rem;'>"
-                        f"{ville_txt} &nbsp;·&nbsp; "
-                        f"<span style='color:{stat_color};'>{statut_txt}</span></div>"
-                        f"</div>"
-                        f"<div style='margin-left:auto;text-align:right;'>"
-                        f"<div style='color:#a78bfa;font-size:1.1rem;font-weight:700;"
-                        f"font-family:JetBrains Mono,monospace;'>{n_voyages}</div>"
-                        f"<div style='color:#64748b;font-size:.72rem;'>voyage{'s' if n_voyages>1 else ''}</div>"
-                        f"</div></div>"
-                    )
-                    # voyage rows
-                    for _, vrow in group.iterrows():
-                        dest     = vrow.get("destination","")
-                        cont     = vrow.get("continent","")
-                        cont_col = CONT_COLORS.get(cont,"#6b7280")
-                        dep      = str(vrow.get("date_depart",""))[:10]
-                        ret      = str(vrow.get("date_retour",""))[:10]
-                        bgt      = vrow.get("budget",0)
-                        note_v   = vrow.get("note",None)
-                        stars    = ("⭐" * int(note_v)) if note_v and not pd.isna(note_v) else "—"
-                        tv       = vrow.get("type_voyage","")
-                        tv_col   = TYPE_COLORS.get(tv,"#6b7280")
-                        card_html += (
-                            f"<div style='display:flex;align-items:center;gap:10px;"
-                            f"padding:7px 0;border-top:1px solid #1e2130;'>"
-                            f"<div style='width:3px;height:32px;border-radius:2px;"
-                            f"background:{cont_col};flex-shrink:0;'></div>"
-                            f"<div style='flex:1;'>"
-                            f"<span style='color:#e8eaf0;font-weight:600;font-size:.85rem;'>{dest}</span>"
-                            f"<span style='color:#475569;font-size:.75rem;margin-left:8px;'>{dep} → {ret}</span>"
-                            f"</div>"
-                            f"<span style='background:{tv_col}22;color:{tv_col};"
-                            f"font-size:.7rem;padding:2px 8px;border-radius:10px;'>{tv}</span>"
-                            f"<span style='color:#fbbf24;font-size:.78rem;font-family:JetBrains Mono,monospace;"
-                            f"margin-left:4px;'>{int(bgt):,}€</span>"
-                            f"<span style='font-size:.75rem;margin-left:6px;'>{stars}</span>"
-                            f"</div>"
+            # ── Toggle vue ────────────────────────────────────────────────────
+            _view = st.session_state.get("tab2_view", "client")
+            _pills = {"client": "👤  Clients", "voyage": "✈️  Voyages"}
+            _tcols = st.columns([1, 1, 8])
+            for _pi, (_pk, _pl) in enumerate(_pills.items()):
+                _act = _view == _pk
+                _mid = f"tvpill-{_pk}"
+                _tcols[_pi].markdown(
+                    f'<div id="{_mid}"></div><style>'
+                    f"div.element-container:has(#{_mid}) + div.element-container button{{"
+                    f"background:{'linear-gradient(135deg,#3b82f6,#7c3aed)' if _act else '#1a1d27'}!important;"
+                    f"color:{'#ffffff' if _act else '#94a3b8'}!important;"
+                    f"border:{'none' if _act else '1px solid #2a2d3e'}!important;"
+                    f"border-radius:20px!important;font-size:.82rem!important;}}</style>",
+                    unsafe_allow_html=True)
+                if _tcols[_pi].button(_pl, key=f"tab2_view_{_pk}", use_container_width=True):
+                    st.session_state["tab2_view"] = _pk
+                    st.rerun()
+            _view = st.session_state.get("tab2_view", "client")
+            st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
+
+            # ── Chargement compagnons (commun aux deux vues) ──────────────────
+            try:
+                _all_voy = _get_db().read_sql("""
+                    SELECT v.groupe_voyage_id, v.client_id,
+                           c.nom, c.prenom,
+                           c.profession, c.ville, c.statut
+                    FROM voyages v
+                    JOIN clients c ON v.client_id = c.id
+                    WHERE v.groupe_voyage_id IS NOT NULL
+                """)
+            except Exception:
+                _all_voy = None
+
+            # ─────────────────────────────────────────────────────────────────
+            # VUE CLIENT
+            # ─────────────────────────────────────────────────────────────────
+            if _view == "client":
+                if has_nom and has_prenom and has_dest and _id_col:
+                    for client_id, group in df.groupby(_id_col, sort=False):
+                        render_client_profile_card(
+                            client_row=group.iloc[0],
+                            voyages_df=group,
+                            all_voyages_df=_all_voy,
                         )
-                    card_html += "</div>"
-                    st.markdown(card_html, unsafe_allow_html=True)
 
-            # ── Case B : clients seuls ─────────────────────────────────────
-            elif has_nom and has_prenom and not has_dest:
-                cols_grid = st.columns(2)
-                for i, (_, row) in enumerate(df.iterrows()):
-                    initials   = (str(row.get("prenom","?"))[:1] +
-                                  str(row.get("nom","?"))[:1]).upper()
-                    statut_txt = str(row.get("statut",""))
-                    stat_color = "#4ade80" if statut_txt == "actif" else "#f87171"
-                    date_ins   = str(row.get("date_inscription",""))[:10]
-                    ville_txt  = row.get("ville","")
-                    card_html  = (
-                        f"<div style='background:#13151d;border:1px solid #1e2130;"
-                        f"border-radius:12px;padding:16px 18px;margin-bottom:12px;'>"
-                        f"<div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;'>"
-                        f"<div style='width:40px;height:40px;border-radius:50%;"
-                        f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
-                        f"display:flex;align-items:center;justify-content:center;"
-                        f"font-weight:700;color:white;'>{initials}</div>"
-                        f"<div><div style='font-weight:700;color:#e8eaf0;'>"
-                        f"{row.get('prenom','')} {row.get('nom','')}</div>"
-                        f"<div style='font-size:.78rem;color:#64748b;'>{ville_txt} · "
-                        f"<span style='color:{stat_color};'>{statut_txt}</span></div></div>"
-                        f"</div>"
-                        f"<div style='font-size:.78rem;color:#64748b;line-height:1.8;'>"
-                        f"📧 {row.get('email','')}<br>"
-                        f"📞 {row.get('telephone','')}<br>"
-                        f"📅 Membre depuis {date_ins}"
-                        f"</div></div>"
-                    )
-                    cols_grid[i % 2].markdown(card_html, unsafe_allow_html=True)
+                elif has_nom and has_prenom:
+                    cols_grid = st.columns(2)
+                    for i, (_, row) in enumerate(df.iterrows()):
+                        _s_val     = row.get(_statut_col) if _statut_col else None
+                        stat_color = "#4ade80" if str(_s_val or "") == "actif" else "#f87171"
+                        initials   = (str(row.get("prenom", "?"))[:1] + str(row.get("nom", "?"))[:1]).upper()
+                        cols_grid[i % 2].markdown(
+                            f"<div style='background:#13151d;border:1px solid #1e2130;"
+                            f"border-radius:12px;padding:16px 18px;margin-bottom:12px;'>"
+                            f"<div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;'>"
+                            f"<div style='width:40px;height:40px;border-radius:50%;"
+                            f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
+                            f"display:flex;align-items:center;justify-content:center;"
+                            f"font-weight:700;color:white;'>{initials}</div>"
+                            f"<div><div style='font-weight:700;color:#e8eaf0;'>"
+                            f"{row.get('prenom','')} {row.get('nom','')}</div>"
+                            f"<div style='font-size:.78rem;color:#64748b;'>{row.get('ville','')} · "
+                            f"<span style='color:{stat_color};'>{row.get('statut','')}</span></div></div></div>"
+                            f"<div style='font-size:.78rem;color:#64748b;line-height:1.8;'>"
+                            f"📧 {row.get('email','')}<br>"
+                            f"📞 {row.get('telephone','')}<br>"
+                            f"📅 Membre depuis {str(row.get('date_inscription',''))[:10]}"
+                            f"</div></div>",
+                            unsafe_allow_html=True)
 
-            # ── Case C : voyages seuls (ou voyages enrichis avec client_nom) ─
             elif has_dest:
-                cols_grid = st.columns(2)
-                for i, (_, row) in enumerate(df.iterrows()):
-                    dest     = row.get("destination","")
-                    pays     = row.get("pays_destination","")
-                    cont     = row.get("continent","")
-                    cont_col = CONT_COLORS.get(cont,"#6b7280")
-                    dep      = str(row.get("date_depart",""))[:10]
-                    ret      = str(row.get("date_retour",""))[:10]
-                    duree    = row.get("duree_jours","")
-                    bgt      = row.get("budget",0)
-                    hotel    = row.get("hotel","")
-                    tv       = row.get("type_voyage","")
-                    tv_col   = TYPE_COLORS.get(tv,"#6b7280")
-                    note_v   = row.get("note",None)
-                    stars    = ("⭐" * int(note_v)) if note_v and not pd.isna(note_v) else "—"
-                    stat_v   = row.get("statut","")
-                    # client name if enriched
-                    cnom     = ""
-                    if has_client_nom:
-                        cnom = f"{row.get('client_prenom','')} {row.get('client_nom','')}"
-                    elif has_client_id:
-                        cnom = f"Client #{int(row.get('client_id',0))}"
-
-                    card_html = (
-                        f"<div style='background:#13151d;border:1px solid #1e2130;"
-                        f"border-top:3px solid {cont_col};"
-                        f"border-radius:12px;padding:16px 18px;margin-bottom:12px;'>"
-                        f"<div style='display:flex;justify-content:space-between;align-items:start;'>"
-                        f"<div>"
-                        f"<div style='font-weight:700;font-size:1rem;color:#e8eaf0;'>{dest}</div>"
-                        f"<div style='font-size:.78rem;color:#64748b;'>{pays} · "
-                        f"<span style='color:{cont_col};'>{cont}</span></div>"
-                        f"</div>"
-                        f"<span style='background:{tv_col}22;color:{tv_col};"
-                        f"font-size:.7rem;padding:3px 10px;border-radius:10px;white-space:nowrap;'>{tv}</span>"
-                        f"</div>"
-                        f"<div style='margin:10px 0;font-size:.8rem;color:#94a3b8;'>"
-                        f"📅 {dep} → {ret}"
-                        f"{'&nbsp;&nbsp;·&nbsp;&nbsp;🕒 ' + str(duree) + 'j' if duree else ''}"
-                        f"{'&nbsp;&nbsp;·&nbsp;&nbsp;' + cnom if cnom else ''}"
-                        f"</div>"
-                        f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
-                        f"<span style='color:#64748b;font-size:.78rem;'>🏨 {hotel}</span>"
-                        f"<div style='text-align:right;'>"
-                        f"<div style='color:#4ade80;font-weight:700;font-family:JetBrains Mono,monospace;'>"
-                        f"{int(bgt):,}€</div>"
-                        f"<div style='font-size:.75rem;'>{stars}</div>"
-                        f"</div></div>"
-                        f"</div>"
-                    )
-                    cols_grid[i % 2].markdown(card_html, unsafe_allow_html=True)
+                    cols_grid = st.columns(2)
+                    for i, (_, row) in enumerate(df.iterrows()):
+                        cont      = row.get("continent", "")
+                        tv        = row.get("type_voyage", "")
+                        cont_col  = CONT_COLORS.get(cont, "#6b7280")
+                        tv_col    = TYPE_COLORS.get(tv, "#6b7280")
+                        note_v    = row.get("note", None)
+                        stars     = ("⭐" * int(note_v)) if note_v and not pd.isna(note_v) else "—"
+                        cnom      = ""
+                        if has_client_nom:
+                            cnom = f"{row.get('client_prenom','')} {row.get('client_nom','')}".strip()
+                        elif has_client_id:
+                            cnom = f"Client #{int(row.get('client_id', 0))}"
+                        cols_grid[i % 2].markdown(
+                            f"<div style='background:#13151d;border:1px solid #1e2130;"
+                            f"border-top:3px solid {cont_col};"
+                            f"border-radius:12px;padding:16px 18px;margin-bottom:12px;'>"
+                            f"<div style='display:flex;justify-content:space-between;align-items:start;'>"
+                            f"<div><div style='font-weight:700;font-size:1rem;color:#e8eaf0;'>{row.get('destination','')}</div>"
+                            f"<div style='font-size:.78rem;color:#64748b;'>{row.get('pays_destination','')} · "
+                            f"<span style='color:{cont_col};'>{cont}</span></div></div>"
+                            f"<span style='background:{tv_col}22;color:{tv_col};"
+                            f"font-size:.7rem;padding:3px 10px;border-radius:10px;white-space:nowrap;'>{tv}</span></div>"
+                            f"<div style='margin:10px 0;font-size:.8rem;color:#94a3b8;'>"
+                            f"📅 {str(row.get('date_depart',''))[:10]} → {str(row.get('date_retour',''))[:10]}"
+                            f"{'&nbsp;&nbsp;·&nbsp;&nbsp;🕒 ' + str(row.get('duree_jours','')) + 'j' if row.get('duree_jours') else ''}"
+                            f"{'&nbsp;&nbsp;·&nbsp;&nbsp;' + cnom if cnom else ''}</div>"
+                            f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+                            f"<span style='color:#64748b;font-size:.78rem;'>🏨 {row.get('hotel','')}</span>"
+                            f"<div style='text-align:right;'>"
+                            f"<div style='color:#4ade80;font-weight:700;font-family:JetBrains Mono,monospace;'>"
+                            f"{int(row.get('budget', 0)):,}€</div>"
+                            f"<div style='font-size:.75rem;'>{stars}</div></div></div></div>",
+                            unsafe_allow_html=True)
+            # ─────────────────────────────────────────────────────────────────
+            # VUE VOYAGE
+            # ─────────────────────────────────────────────────────────────────
             else:
-                st.info("Aucune vue fiche disponible pour ces colonnes.")
+                if has_dest:
+                    for _, vrow in df.iterrows():
+                        render_voyage_profile_card(
+                            voyage_row=vrow,
+                            all_voyages_df=_all_voy,
+                            col_statut_client=_statut_col or "statut",
+                        )
+                else:
+                    st.info("Aucune colonne de destination trouvée pour la vue voyage.")
 
-        # ══════════════════════════════════════════════════════════════════════
-        # TAB 3 — Timeline
-        # ══════════════════════════════════════════════════════════════════════
+        # ── TAB 3 — Timeline ──────────────────────────────────────────────────
         with tab3:
             if not has_depart:
                 st.info("La timeline nécessite une colonne `date_depart`.")
@@ -1142,17 +3854,12 @@ div[data-testid="stTabsTabList"] button[role="tab"][aria-selected="true"] {{
                 if "date_retour" in df_tl.columns:
                     df_tl["date_retour"] = pd.to_datetime(df_tl["date_retour"], errors="coerce")
                 df_tl = df_tl.dropna(subset=["date_depart"]).sort_values("date_depart")
-
                 if df_tl.empty:
                     st.info("Aucune date valide trouvée.")
                 else:
-                    d_min = df_tl["date_depart"].min()
-                    d_max = (df_tl["date_retour"].max()
-                             if "date_retour" in df_tl.columns
-                             else df_tl["date_depart"].max())
-                    span  = max((d_max - d_min).days, 1)
-
-                    # group by year-month for section headers
+                    d_min     = df_tl["date_depart"].min()
+                    d_max     = df_tl["date_retour"].max() if "date_retour" in df_tl.columns else df_tl["date_depart"].max()
+                    span      = max((d_max - d_min).days, 1)
                     current_ym = None
                     for _, row in df_tl.iterrows():
                         ym = row["date_depart"].strftime("%B %Y").capitalize()
@@ -1161,64 +3868,49 @@ div[data-testid="stTabsTabList"] button[role="tab"][aria-selected="true"] {{
                             st.markdown(
                                 f"<div style='color:#6366f1;font-size:.75rem;font-weight:700;"
                                 f"text-transform:uppercase;letter-spacing:1px;"
-                                f"font-family:JetBrains Mono,monospace;"
-                                f"margin:18px 0 6px;'>{ym}</div>",
+                                f"font-family:JetBrains Mono,monospace;margin:18px 0 6px;'>{ym}</div>",
                                 unsafe_allow_html=True)
-
                         dep      = row["date_depart"]
-                        ret      = row.get("date_retour") if has_depart and "date_retour" in df_tl.columns else dep
+                        ret      = row.get("date_retour", dep)
                         if pd.isna(ret): ret = dep
                         duree    = max((ret - dep).days, 1)
-                        left_pct = round((dep - d_min).days / span * 100, 1)
-                        width_pct= max(round(duree / span * 100, 1), 1.5)
-
-                        dest     = row.get("destination","")
-                        cont     = row.get("continent","")
-                        cont_col = CONT_COLORS.get(cont,"#6b7280")
-                        tv       = row.get("type_voyage","")
-                        tv_col   = TYPE_COLORS.get(tv,"#6b7280")
-                        bgt      = row.get("budget","")
-                        note_v   = row.get("note",None)
+                        cont     = row.get("continent", "")
+                        tv       = row.get("type_voyage", "")
+                        cont_col = CONT_COLORS.get(cont, "#6b7280")
+                        tv_col   = TYPE_COLORS.get(tv, "#6b7280")
+                        note_v   = row.get("note", None)
                         stars    = "⭐" * int(note_v) if note_v and not pd.isna(note_v) else ""
                         cnom     = ""
                         if has_client_nom:
                             cnom = f"{row.get('client_prenom','')} {row.get('client_nom','')}".strip()
-                        elif has_prenom and has_nom:
+                        elif has_nom and has_prenom:
                             cnom = f"{row.get('prenom','')} {row.get('nom','')}".strip()
-
-                        dep_str = dep.strftime("%d %b %Y")
-                        ret_str = ret.strftime("%d %b %Y")
-
+                        left_pct  = round((dep - d_min).days / span * 100, 1)
+                        width_pct = max(round(duree / span * 100, 1), 1.5)
                         st.markdown(
                             f"<div style='background:#13151d;border:1px solid #1e2130;"
                             f"border-radius:10px;padding:12px 16px;margin-bottom:8px;'>"
-                            # label row
                             f"<div style='display:flex;align-items:center;gap:8px;margin-bottom:8px;'>"
                             f"<span style='width:8px;height:8px;border-radius:50%;"
                             f"background:{cont_col};display:inline-block;flex-shrink:0;'></span>"
-                            f"<span style='font-weight:600;color:#e8eaf0;font-size:.9rem;'>{dest}</span>"
+                            f"<span style='font-weight:600;color:#e8eaf0;font-size:.9rem;'>{row.get('destination','')}</span>"
                             f"{'<span style=\"color:#94a3b8;font-size:.78rem;\"> · ' + cnom + '</span>' if cnom else ''}"
                             f"<span style='margin-left:auto;color:#64748b;font-size:.75rem;'>"
-                            f"{dep_str} → {ret_str} · {duree}j</span>"
-                            f"</div>"
-                            # bar
+                            f"{dep.strftime('%d %b %Y')} → {ret.strftime('%d %b %Y')} · {duree}j</span></div>"
                             f"<div style='position:relative;height:10px;background:#1e293b;"
                             f"border-radius:5px;overflow:hidden;'>"
                             f"<div style='position:absolute;left:{left_pct}%;width:{width_pct}%;"
                             f"height:100%;background:linear-gradient(90deg,{cont_col},{tv_col});"
                             f"border-radius:5px;'></div></div>"
-                            # chips
                             f"<div style='margin-top:7px;display:flex;gap:6px;flex-wrap:wrap;'>"
                             f"<span style='background:{tv_col}22;color:{tv_col};font-size:.7rem;"
                             f"padding:2px 8px;border-radius:10px;'>{tv}</span>"
-                            f"{'<span style=\"font-size:.75rem;color:#4ade80;font-family:JetBrains Mono,monospace;\">' + str(int(bgt)) + '€</span>' if bgt else ''}"
+                            f"{'<span style=\"font-size:.75rem;color:#4ade80;font-family:JetBrains Mono,monospace;\">' + str(int(row.get('budget',0))) + '€</span>' if row.get('budget') else ''}"
                             f"<span style='font-size:.72rem;'>{stars}</span>"
                             f"</div></div>",
                             unsafe_allow_html=True)
 
-        # ══════════════════════════════════════════════════════════════════════
-        # TAB 4 — Statistiques
-        # ══════════════════════════════════════════════════════════════════════
+        # ── TAB 4 — Statistiques ──────────────────────────────────────────────
         with tab4:
             def _hbar(label, value, total, color, fmt=None):
                 pct   = round(value / total * 100) if total else 0
@@ -1235,11 +3927,10 @@ div[data-testid="stTabsTabList"] button[role="tab"][aria-selected="true"] {{
                     f"background:{color};transition:width .3s;'></div></div></div>"
                 )
 
-            if has_dest:  # voyage stats
+            if has_dest:
                 sa, sb = st.columns(2)
+                n_total = len(df)
                 with sa:
-                    # Key metrics
-                    n_total = len(df)
                     if has_budget:
                         bgt_total = df["budget"].sum()
                         bgt_moy   = df["budget"].mean()
@@ -1251,11 +3942,10 @@ div[data-testid="stTabsTabList"] button[role="tab"][aria-selected="true"] {{
                             f"<div style='color:#4ade80;font-size:1.6rem;font-weight:800;"
                             f"font-family:JetBrains Mono,monospace;'>{int(bgt_total):,}€</div>"
                             f"<div style='color:#64748b;font-size:.8rem;'>moy. {int(bgt_moy):,}€ / voyage</div>"
-                            f"</div>",
-                            unsafe_allow_html=True)
+                            f"</div>", unsafe_allow_html=True)
                     if has_duree:
                         d_moy = df["duree_jours"].mean()
-                        d_max = df["duree_jours"].max()
+                        d_max_v = df["duree_jours"].max()
                         st.markdown(
                             f"<div style='background:#13151d;border:1px solid #1e2130;"
                             f"border-radius:10px;padding:14px 18px;margin-bottom:12px;'>"
@@ -1263,11 +3953,11 @@ div[data-testid="stTabsTabList"] button[role="tab"][aria-selected="true"] {{
                             f"letter-spacing:1px;margin-bottom:6px;'>Durée moyenne</div>"
                             f"<div style='color:#60a5fa;font-size:1.6rem;font-weight:800;"
                             f"font-family:JetBrains Mono,monospace;'>{d_moy:.1f}j</div>"
-                            f"<div style='color:#64748b;font-size:.8rem;'>max {int(d_max)}j</div>"
-                            f"</div>",
-                            unsafe_allow_html=True)
+                            f"<div style='color:#64748b;font-size:.8rem;'>max {int(d_max_v)}j</div>"
+                            f"</div>", unsafe_allow_html=True)
                     if has_note:
-                        notes = df["note"].dropna()
+                        _note_col = _find_col(df, "note", "voyages_note")
+                        notes = df[_note_col].dropna() if _note_col else pd.Series([], dtype=float)
                         if len(notes):
                             note_moy = notes.mean()
                             st.markdown(
@@ -1279,17 +3969,14 @@ div[data-testid="stTabsTabList"] button[role="tab"][aria-selected="true"] {{
                                 f"{'⭐' * round(note_moy)} <span style='font-size:.9rem;"
                                 f"font-family:JetBrains Mono,monospace;'>{note_moy:.1f}/5</span></div>"
                                 f"<div style='color:#64748b;font-size:.8rem;'>{len(notes)} avis</div>"
-                                f"</div>",
-                                unsafe_allow_html=True)
+                                f"</div>", unsafe_allow_html=True)
                 with sb:
                     if has_continent:
                         st.markdown("<div style='color:#94a3b8;font-size:.75rem;text-transform:uppercase;"
                                     "letter-spacing:1px;margin-bottom:8px;'>Par continent</div>",
                                     unsafe_allow_html=True)
-                        cont_counts = df["continent"].value_counts()
-                        bars = ""
-                        for cont, cnt_c in cont_counts.items():
-                            bars += _hbar(cont, cnt_c, n_total, CONT_COLORS.get(cont,"#6b7280"))
+                        bars = "".join(_hbar(c, v, n_total, CONT_COLORS.get(c, "#6b7280"))
+                                       for c, v in df["continent"].value_counts().items())
                         st.markdown(f"<div style='background:#13151d;border:1px solid #1e2130;"
                                     f"border-radius:10px;padding:14px 18px;margin-bottom:12px;'>{bars}</div>",
                                     unsafe_allow_html=True)
@@ -1297,38 +3984,34 @@ div[data-testid="stTabsTabList"] button[role="tab"][aria-selected="true"] {{
                         st.markdown("<div style='color:#94a3b8;font-size:.75rem;text-transform:uppercase;"
                                     "letter-spacing:1px;margin-bottom:8px;'>Par type</div>",
                                     unsafe_allow_html=True)
-                        type_counts = df["type_voyage"].value_counts()
-                        bars = ""
-                        for tv, cnt_t in type_counts.items():
-                            bars += _hbar(tv, cnt_t, n_total, TYPE_COLORS.get(tv,"#6b7280"))
+                        bars = "".join(_hbar(tv, v, n_total, TYPE_COLORS.get(tv, "#6b7280"))
+                                       for tv, v in df["type_voyage"].value_counts().items())
                         st.markdown(f"<div style='background:#13151d;border:1px solid #1e2130;"
                                     f"border-radius:10px;padding:14px 18px;'>{bars}</div>",
                                     unsafe_allow_html=True)
-
-                # Top destinations
                 if has_budget:
                     st.markdown("<div style='color:#94a3b8;font-size:.75rem;text-transform:uppercase;"
                                 "letter-spacing:1px;margin:14px 0 8px;'>Top destinations — budget</div>",
                                 unsafe_allow_html=True)
-                    top_dest = (df.groupby("destination")["budget"]
-                                .sum().sort_values(ascending=False).head(8))
+                    top_dest = df.groupby("destination")["budget"].sum().sort_values(ascending=False).head(8)
                     max_b    = top_dest.max()
-                    bars     = ""
-                    for dest, b in top_dest.items():
-                        cont_dest = df[df["destination"]==dest]["continent"].iloc[0] if has_continent else ""
-                        col_dest  = CONT_COLORS.get(cont_dest,"#6b7280")
-                        bars     += _hbar(dest, int(b), int(max_b), col_dest,
-                                          fmt=lambda x: f"{x:,}€")
+                    bars = "".join(
+                        _hbar(dest, int(b), int(max_b),
+                              CONT_COLORS.get(df[df["destination"] == dest]["continent"].iloc[0] if has_continent else "", "#6b7280"),
+                              fmt=lambda x: f"{x:,}€")
+                        for dest, b in top_dest.items()
+                    )
                     st.markdown(f"<div style='background:#13151d;border:1px solid #1e2130;"
                                 f"border-radius:10px;padding:14px 18px;'>{bars}</div>",
                                 unsafe_allow_html=True)
 
-            elif has_nom:  # client stats
+            elif has_nom:
                 sa, sb = st.columns(2)
+                n_total = len(df)
                 with sa:
-                    n_total = len(df)
-                    if "statut" in df.columns:
-                        n_actif = (df["statut"] == "actif").sum()
+                    if "statut" in df.columns or "clients_statut" in df.columns:
+                        _sc = _find_col(df, "statut", "clients_statut")
+                        n_actif = (_sc and (df[_sc] == "actif").sum()) or 0
                         st.markdown(
                             f"<div style='background:#13151d;border:1px solid #1e2130;"
                             f"border-radius:10px;padding:14px 18px;margin-bottom:12px;'>"
@@ -1339,26 +4022,58 @@ div[data-testid="stTabsTabList"] button[role="tab"][aria-selected="true"] {{
                             f"font-family:JetBrains Mono,monospace;'>{n_actif}</div>"
                             f"<div style='color:#64748b;font-size:.78rem;'>actifs</div></div>"
                             f"<div><div style='color:#f87171;font-size:1.4rem;font-weight:800;"
-                            f"font-family:JetBrains Mono,monospace;'>{n_total-n_actif}</div>"
+                            f"font-family:JetBrains Mono,monospace;'>{n_total - n_actif}</div>"
                             f"<div style='color:#64748b;font-size:.78rem;'>inactifs</div></div>"
-                            f"</div></div>",
-                            unsafe_allow_html=True)
+                            f"</div></div>", unsafe_allow_html=True)
                 with sb:
                     if has_ville:
+                        _ville_col = _find_col(df, "ville", "clients_ville")
                         st.markdown("<div style='color:#94a3b8;font-size:.75rem;text-transform:uppercase;"
                                     "letter-spacing:1px;margin-bottom:8px;'>Par ville</div>",
                                     unsafe_allow_html=True)
-                        ville_counts = df["ville"].value_counts().head(8)
-                        bars = ""
-                        for ville, cnt_v in ville_counts.items():
-                            bars += _hbar(ville, cnt_v, n_total, "#6366f1")
+                        bars = "".join(_hbar(v, c, n_total, "#6366f1")
+                                       for v, c in df[_ville_col].value_counts().head(8).items())
                         st.markdown(f"<div style='background:#13151d;border:1px solid #1e2130;"
                                     f"border-radius:10px;padding:14px 18px;'>{bars}</div>",
                                     unsafe_allow_html=True)
             else:
                 st.info("Statistiques non disponibles pour cette combinaison de colonnes.")
 
-    # ── Enrichment button ───────────────────────────────────────────────────────
+    # ── Dialog cellule ─────────────────────────────────────────────────────────
+    if st.session_state.get("_cell_dialog_pending"):
+        col_n, val_n = st.session_state.pop("_cell_dialog_pending")
+        cell_filter_dialog(col_n, val_n)
+
+    # ── Rapport ────────────────────────────────────────────────────────────────
+    if st.session_state.results is not None and len(st.session_state.results) > 0:
+        _r_col, _ = st.columns([2, 8])
+        with _r_col:
+            m_id = "rpt-marker"
+            st.markdown(
+                f'<div id="{m_id}"></div><style>'
+                f"div.element-container:has(#{m_id}) + div.element-container button{{"
+                f"background:linear-gradient(135deg,#059669,#0d9488)!important;"
+                f"color:white!important;border:none!important;"
+                f"border-radius:8px!important;font-size:.85rem!important;}}"
+                f"div.element-container:has(#{m_id}) + div.element-container button:hover{{"
+                f"filter:brightness(1.12)!important;transform:translateY(-1px)!important;}}"
+                f"</style>", unsafe_allow_html=True)
+            if st.button("📄 Rapport", key="rpt_open",
+                         help="Générer un rapport Word ou PDF de ces résultats",
+                         use_container_width=True):
+                _rapport_dialog(
+                    st.session_state.results,
+                    st.session_state.conditions,
+                    current_table,
+                    st.session_state.joins,
+                    st.session_state.last_where,
+                )
+
+    # ── Bouton Enrichir (masqué si la table est déjà jointe manuellement) ──────
+    joined_tables = {j["table"] for j in st.session_state.joins}
+    if enrich.get(current_table) and enrich[current_table]["other"] in joined_tables:
+        return   # jointure déjà active → bouton Enrichir inutile
+
     st.markdown("---")
     if cnt is None:
         st.info(f"Calcul du lien avec **{other_table}** en cours…")
@@ -1372,49 +4087,60 @@ div[data-testid="stTabsTabList"] button[role="tab"][aria-selected="true"] {{
             f"<b style='color:#94a3b8;'>{other_table}</b> pour ces résultats.</div>",
             unsafe_allow_html=True)
     else:
-        enrich_marker = "enrich-btn-marker"
+        m = "enrich-btn-marker"
         st.markdown(
-            f'<div id="{enrich_marker}"></div><style>'
-            f"div.element-container:has(#{enrich_marker}) + div.element-container button{{"
+            f'<div id="{m}"></div><style>'
+            f"div.element-container:has(#{m}) + div.element-container button{{"
             f"background:linear-gradient(135deg,#065f46,#047857)!important;"
             f"border:1px solid #059669!important;box-shadow:0 0 14px #05966966!important;"
             f"font-size:.92rem!important;padding:10px 0!important;}}"
-            f"div.element-container:has(#{enrich_marker}) + div.element-container button:hover{{"
+            f"div.element-container:has(#{m}) + div.element-container button:hover{{"
             f"filter:brightness(1.15)!important;transform:translateY(-1px)!important;}}</style>",
             unsafe_allow_html=True)
         if st.button(
-            f"🔗 Enrichir avec {other_table} — {cnt} ligne{'s' if cnt>1 else ''} disponible{'s' if cnt>1 else ''}",
+            f"🔗 Enrichir avec {other_table} — {cnt} ligne{'s' if cnt > 1 else ''} disponible{'s' if cnt > 1 else ''}",
             width="stretch", key="enrich_btn"):
             try:
-                old_cols = set(df.columns)
                 enriched = run_enrich_query(current_table,
                                             st.session_state.last_where,
-                                            st.session_state.last_params)
-                new_cols  = set(enriched.columns)
-                added     = new_cols - old_cols
-
-                # Déterminer quels onglets ont de nouvelles données
-                # Tab positions: 1=Grille, 2=Fiches, 3=Timeline, 4=Statistiques
-                blink = set()
-
-                # Fiches : nouvelles colonnes de l'autre table visibles dans les cartes
-                if added & {"destination","client_nom","client_prenom",
-                            "voyage_id","date_depart","type_voyage"}:
-                    blink.add(2)
-
-                # Timeline : date_depart nouvellement disponible
-                if "date_depart" in added and "date_depart" not in old_cols:
-                    blink.add(3)
-
-                # Statistiques : nouvelles métriques calculables
-                if added & {"budget","continent","type_voyage","ville","note"}:
-                    blink.add(4)
-
-                st.session_state.results           = enriched
-                st.session_state.enrich_count      = "done"
-                st.session_state["_enrich_hl_until"] = time.time() + 20
-                st.session_state["_blink_tabs"]      = blink
+                                            st.session_state.last_params,
+                                            enrich)
+                st.session_state.results      = enriched
+                st.session_state.enrich_count = "done"
+                st.session_state["_last_cell_click"] = None
                 st.rerun()
             except Exception as e:
                 st.error(f"Erreur enrichissement : {e}")
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CONFIGURATION MÉTIER  —  modifier ici pour changer les tables / colonnes
+# ══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# LANCEMENT
+# ══════════════════════════════════════════════════════════════════════════════
+
+# 1. Page de connexion — affichée tant qu'aucune DB n'est configurée
+if not render_connection_page():
+    st.stop()
+
+# 2. Chargement de la configuration YAML/TOML
+#    (le schéma peut être surchargé par l'introspection automatique)
+try:
+    _cfg   = load_config()
+    SCHEMA = st.session_state.get("_db_schema_override") or _cfg["schema"]
+    ENRICH = _cfg.get("enrich", {})
+except FileNotFoundError:
+    # Pas de config.yaml : utilise uniquement le schéma découvert depuis la DB
+    SCHEMA = st.session_state.get("_db_schema_override")
+    ENRICH = {}
+    if not SCHEMA:
+        st.error(
+            "⚠️ Aucun fichier `config.yaml` trouvé et aucun schéma auto-découvert. "
+            "Créez `config.yaml` ou connectez une base de données réelle.")
+        st.stop()
+except (ValueError, KeyError) as _e:
+    st.error(f"⚠️ Erreur dans le fichier de config : {_e}")
+    st.stop()
+
+run_app(SCHEMA, ENRICH)
