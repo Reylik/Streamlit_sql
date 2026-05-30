@@ -3723,22 +3723,23 @@ def run_app(schema: dict, enrich: dict):
 
             # ── Toggle vue ────────────────────────────────────────────────────
             _view = st.session_state.get("tab2_view", "client")
-            _pills = {"client": "👤  Clients", "voyage": "✈️  Voyages"}
             _tcols = st.columns([1, 1, 8])
-            for _pi, (_pk, _pl) in enumerate(_pills.items()):
-                _act = _view == _pk
-                _mid = f"tvpill-{_pk}"
-                _tcols[_pi].markdown(
-                    f'<div id="{_mid}"></div><style>'
-                    f"div.element-container:has(#{_mid}) + div.element-container button{{"
-                    f"background:{'linear-gradient(135deg,#3b82f6,#7c3aed)' if _act else '#1a1d27'}!important;"
-                    f"color:{'#ffffff' if _act else '#94a3b8'}!important;"
-                    f"border:{'none' if _act else '1px solid #2a2d3e'}!important;"
-                    f"border-radius:20px!important;font-size:.82rem!important;}}</style>",
-                    unsafe_allow_html=True)
-                if _tcols[_pi].button(_pl, key=f"tab2_view_{_pk}", use_container_width=True):
-                    st.session_state["tab2_view"] = _pk
-                    st.rerun()
+            if _tcols[0].button(
+                "👤  Clients",
+                key="tab2_view_client",
+                type="primary" if _view == "client" else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["tab2_view"] = "client"
+                st.rerun()
+            if _tcols[1].button(
+                "✈️  Voyages",
+                key="tab2_view_voyage",
+                type="primary" if _view == "voyage" else "secondary",
+                use_container_width=True,
+            ):
+                st.session_state["tab2_view"] = "voyage"
+                st.rerun()
             _view = st.session_state.get("tab2_view", "client")
             st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
 
