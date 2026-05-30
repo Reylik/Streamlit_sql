@@ -2190,47 +2190,44 @@ def render_client_profile_card(
                     if transport:st.markdown(f"✈️ **Transport :** {transport}")
 
         with col_comp:
-            lbl_btn = f"👥 {len(companions)}" if has_comp else "👥 0"
-            if has_comp:
-                with st.popover(lbl_btn, use_container_width=True):
-                    st.markdown(
-                        f"<div style='font-size:.7rem;text-transform:uppercase;"
-                        f"letter-spacing:1px;font-family:JetBrains Mono,monospace;"
-                        f"color:#94a3b8;margin-bottom:8px;'>"
-                        f"{len(companions)} compagnon{'s' if len(companions)>1 else ''}"
-                        f" de voyage</div>",
-                        unsafe_allow_html=True)
-                    for cp_prenom, cp_nom, cp_prof, cp_ville, cp_stat in companions:
-                        cp_ini = ((cp_prenom[:1] if cp_prenom else "") +
-                                  (cp_nom[:1]    if cp_nom    else "")).upper() or "?"
-                        sc2    = "#4ade80" if cp_stat == "actif" else "#f87171"
-                        meta   = "  ·  ".join(filter(None, [cp_prof, cp_ville]))
-                        st.markdown(
-                            f"<div style='display:flex;align-items:flex-start;gap:10px;"
-                            f"padding:8px 0;border-top:1px solid #1e2130;'>"
-                            f"<div style='width:32px;height:32px;border-radius:50%;"
-                            f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
-                            f"display:flex;align-items:center;justify-content:center;"
-                            f"font-weight:700;font-size:.72rem;color:white;"
-                            f"flex-shrink:0;margin-top:1px;'>{cp_ini}</div>"
-                            f"<div style='flex:1;'>"
-                            f"<div style='font-weight:600;font-size:.85rem;color:#e8eaf0;'>"
-                            f"{cp_prenom} {cp_nom}</div>"
-                            f"{'<div style=\"font-size:.72rem;color:#64748b;margin-top:2px;\">' + meta + '</div>' if meta else ''}"
-                            f"<div style='margin-top:3px;'>"
-                            f"<span style='font-size:.68rem;padding:1px 7px;border-radius:20px;"
-                            f"background:{sc2}22;color:{sc2};'>{cp_stat}</span>"
-                            f"</div></div></div>",
-                            unsafe_allow_html=True)
-            else:
+            # Client courant toujours en premier — popover toujours actif
+            _self = (
+                _safe_get(client_row, col_prenom,     ""),
+                _safe_get(client_row, col_nom,        ""),
+                _safe_get(client_row, col_profession, ""),
+                _safe_get(client_row, col_ville,      ""),
+                _safe_get(client_row, col_statut,     ""),
+            )
+            all_members = [_self] + companions
+            with st.popover(f"👥 {len(all_members)}", use_container_width=True):
                 st.markdown(
-                    "<div style='display:flex;align-items:center;"
-                    "justify-content:center;height:36px;"
-                    "border:1px solid #1e2130;border-radius:6px;"
-                    "color:#334155;font-size:.83rem;"
-                    "cursor:not-allowed;user-select:none;'>👥 0</div>",
-                    unsafe_allow_html=True,
-                )
+                    f"<div style='font-size:.7rem;text-transform:uppercase;"
+                    f"letter-spacing:1px;font-family:JetBrains Mono,monospace;"
+                    f"color:#94a3b8;margin-bottom:8px;'>"
+                    f"{len(all_members)} participant"
+                    f"{'s' if len(all_members)>1 else ''}</div>",
+                    unsafe_allow_html=True)
+                for mp, mn, mprof, mvil, mstat in all_members:
+                    cp_ini = ((mp[:1] if mp else "")+(mn[:1] if mn else "")).upper() or "?"
+                    sc2    = "#4ade80" if mstat == "actif" else "#f87171"
+                    meta   = "  ·  ".join(filter(None, [mprof, mvil]))
+                    st.markdown(
+                        f"<div style='display:flex;align-items:flex-start;gap:10px;"
+                        f"padding:8px 0;border-top:1px solid #1e2130;'>"
+                        f"<div style='width:32px;height:32px;border-radius:50%;"
+                        f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
+                        f"display:flex;align-items:center;justify-content:center;"
+                        f"font-weight:700;font-size:.72rem;color:white;"
+                        f"flex-shrink:0;margin-top:1px;'>{cp_ini}</div>"
+                        f"<div style='flex:1;'>"
+                        f"<div style='font-weight:600;font-size:.85rem;color:#e8eaf0;'>"
+                        f"{mp} {mn}</div>"
+                        f"{'<div style=\"font-size:.72rem;color:#64748b;margin-top:2px;\">' + meta + '</div>' if meta else ''}"
+                        f"<div style='margin-top:3px;'>"
+                        f"<span style='font-size:.68rem;padding:1px 7px;border-radius:20px;"
+                        f"background:{sc2}22;color:{sc2};'>{mstat or '—'}</span>"
+                        f"</div></div></div>",
+                        unsafe_allow_html=True)
 
         if is_last:
             st.markdown(
