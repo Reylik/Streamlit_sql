@@ -68,22 +68,40 @@ def get_connection():
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS clients(id INTEGER PRIMARY KEY,nom TEXT,prenom TEXT,
       email TEXT,telephone TEXT,ville TEXT,pays TEXT,date_inscription TEXT,statut TEXT,
-      nationalite TEXT,num_passeport TEXT,date_expiration_passeport TEXT,
       num_carte_identite TEXT,date_expiration_ci TEXT,
       profession TEXT,employeur TEXT,situation_pro TEXT);
     INSERT INTO clients VALUES
-    (1,'Lemaire','Sophie','sophie.lemaire@mail.fr','0612345678','Paris','France','2020-01-15','actif','Française','FP123456','2028-06-15','9901234567890','2025-08-20','Ingénieure informatique','TechCorp SA','CDI'),
-    (2,'Garnier','Thomas','t.garnier@mail.fr','0623456789','Lyon','France','2019-06-22','actif','Française','FP234567','2027-03-22','9912345678901','2024-11-30','Consultant','McKinsey France','CDI'),
-    (3,'Faure','Julie','julie.faure@mail.fr','0634567890','Marseille','France','2021-03-10','actif','Française','FP345678','2029-01-10','9923456789012','2026-04-15','Médecin','CHU Marseille','Titulaire'),
-    (4,'Chevalier','Marc','marc.chev@mail.fr','0645678901','Bordeaux','France','2018-11-05','inactif','Française','FP456789','2025-09-05','9934567890123','2023-12-01','Directeur commercial','AutoParts SAS','CDI'),
-    (5,'Morin','Lucie','lucie.morin@mail.fr','0656789012','Nantes','France','2022-07-30','actif','Française',NULL,NULL,'9945678901234','2027-06-20','Graphiste','Freelance','Indépendante'),
-    (6,'Perrin','Antoine','a.perrin@mail.fr','0667890123','Toulouse','France','2020-09-14','actif','Française','FP678901','2026-12-14','9956789012345','2025-03-10','Avocat','Cabinet Perrin & Associés','Libéral'),
-    (7,'Blanc','Camille','c.blanc@mail.fr','0678901234','Strasbourg','France','2023-02-01','actif','Française','FP789012','2030-02-01','9967890123456','2028-01-25','Architecte','Studio 42','CDI'),
-    (8,'Renard','Nicolas','n.renard@mail.fr','0689012345','Lille','France','2017-05-18','inactif','Française','FP890123','2024-05-18',NULL,NULL,'Retraité',NULL,'Retraité'),
-    (9,'Vidal','Inès','ines.vidal@mail.fr','0690123456','Nice','France','2021-12-25','actif','Française','FP901234','2028-12-25','9989012345678','2026-09-30','Chef de projet','BNP Paribas','CDI'),
-    (10,'Roy','Kevin','kevin.roy@mail.fr','0601234567','Rennes','France','2022-04-03','actif','Française',NULL,NULL,'9990123456789','2027-04-03','Développeur full-stack','StartupXYZ','CDI'),
-    (11,'Caron','Éléonore','e.caron@mail.fr','0611223344','Paris','France','2019-08-19','actif','Française','FP122334','2027-08-19','9901122334455','2025-11-15','Professeure','Lycée Victor Hugo','Titulaire'),
-    (12,'Picard','Bastien','b.picard@mail.fr','0622334455','Montpellier','France','2023-10-11','actif','Française',NULL,NULL,'9912233445566','2028-10-11','Étudiant','Université Paris-Dauphine','Alternance');
+    (1,'Lemaire','Sophie','sophie.lemaire@mail.fr','0612345678','Paris','France','2020-01-15','actif','9901234567890','2025-08-20','Ingénieure informatique','TechCorp SA','CDI'),
+    (2,'Garnier','Thomas','t.garnier@mail.fr','0623456789','Lyon','France','2019-06-22','actif','9912345678901','2024-11-30','Consultant','McKinsey France','CDI'),
+    (3,'Faure','Julie','julie.faure@mail.fr','0634567890','Marseille','France','2021-03-10','actif','9923456789012','2026-04-15','Médecin','CHU Marseille','Titulaire'),
+    (4,'Chevalier','Marc','marc.chev@mail.fr','0645678901','Bordeaux','France','2018-11-05','inactif','9934567890123','2023-12-01','Directeur commercial','AutoParts SAS','CDI'),
+    (5,'Morin','Lucie','lucie.morin@mail.fr','0656789012','Nantes','France','2022-07-30','actif','9945678901234','2027-06-20','Graphiste','Freelance','Indépendante'),
+    (6,'Perrin','Antoine','a.perrin@mail.fr','0667890123','Toulouse','France','2020-09-14','actif','9956789012345','2025-03-10','Avocat','Cabinet Perrin & Associés','Libéral'),
+    (7,'Blanc','Camille','c.blanc@mail.fr','0678901234','Strasbourg','France','2023-02-01','actif','9967890123456','2028-01-25','Architecte','Studio 42','CDI'),
+    (8,'Renard','Nicolas','n.renard@mail.fr','0689012345','Lille','France','2017-05-18','inactif',NULL,NULL,'Retraité',NULL,'Retraité'),
+    (9,'Vidal','Inès','ines.vidal@mail.fr','0690123456','Nice','France','2021-12-25','actif','9989012345678','2026-09-30','Chef de projet','BNP Paribas','CDI'),
+    (10,'Roy','Kevin','kevin.roy@mail.fr','0601234567','Rennes','France','2022-04-03','actif','9990123456789','2027-04-03','Développeur full-stack','StartupXYZ','CDI'),
+    (11,'Caron','Éléonore','e.caron@mail.fr','0611223344','Paris','France','2019-08-19','actif','9901122334455','2025-11-15','Professeure','Lycée Victor Hugo','Titulaire'),
+    (12,'Picard','Bastien','b.picard@mail.fr','0622334455','Montpellier','France','2023-10-11','actif','9912233445566','2028-10-11','Étudiant','Université Paris-Dauphine','Alternance');
+
+    CREATE TABLE IF NOT EXISTS passeports(
+      id INTEGER PRIMARY KEY, client_id INTEGER,
+      num_passeport TEXT, nationalite TEXT,
+      date_emission TEXT, date_expiration TEXT,
+      FOREIGN KEY(client_id) REFERENCES clients(id));
+    INSERT INTO passeports VALUES
+    (1,1,'FP100001','Française','2013-06-15','2018-06-15'),
+    (2,1,'FP100002','Française','2023-07-01','2033-07-01'),
+    (3,2,'FP200001','Française','2014-03-22','2019-03-22'),
+    (4,2,'FP200002','Française','2024-04-01','2034-04-01'),
+    (5,3,'FP300001','Française','2021-01-10','2031-01-10'),
+    (6,4,'FP400001','Française','2010-09-05','2015-09-05'),
+    (7,6,'FP600001','Française','2016-12-14','2021-12-14'),
+    (8,6,'FP600002','Française','2026-01-01','2036-01-01'),
+    (9,7,'FP700001','Française','2023-02-01','2033-02-01'),
+    (10,8,'FP800001','Française','2009-05-18','2014-05-18'),
+    (11,9,'FP900001','Française','2018-12-25','2028-12-25'),
+    (12,11,'FP110001','Française','2017-08-19','2027-08-19');
 
     CREATE TABLE IF NOT EXISTS voyages(id INTEGER PRIMARY KEY,client_id INTEGER,
       destination TEXT,pays_destination TEXT,continent TEXT,
@@ -232,10 +250,7 @@ class DBAdapter:
 
 
 def _get_db() -> DBAdapter:
-    """Retourne l'adaptateur actif (connexion réelle ou démo SQLite)."""
-    adapter = st.session_state.get("_db_adapter")
-    if adapter:
-        return adapter
+    """Retourne l'adaptateur SQLite de démonstration (toujours actif)."""
     return DBAdapter("sqlite", get_connection(), "Démo SQLite")
 
 
@@ -1920,16 +1935,19 @@ def render_client_profile_card(
     client_row,
     voyages_df=None,
     all_voyages_df=None,
+    passeports_df=None,        # DataFrame des passeports de ce client
     # ── Colonnes client — coordonnées ──────────────────────────────────────────
     col_nom="nom", col_prenom="prenom", col_email="email",
     col_telephone="telephone", col_ville="ville", col_statut="statut",
     col_date_inscription="date_inscription",
     # ── Colonnes client — papiers d'identité ────────────────────────────────────
-    col_nationalite="nationalite",
-    col_num_passeport="num_passeport",
-    col_exp_passeport="date_expiration_passeport",
     col_num_ci="num_carte_identite",
     col_exp_ci="date_expiration_ci",
+    # ── Colonnes passeports (dans passeports_df) ─────────────────────────────────
+    col_pp_num="num_passeport",
+    col_pp_nat="nationalite",
+    col_pp_emission="date_emission",
+    col_pp_expiration="date_expiration",
     # ── Colonnes client — situation professionnelle ─────────────────────────────
     col_profession="profession", col_employeur="employeur",
     col_situation_pro="situation_pro",
@@ -2002,15 +2020,39 @@ def render_client_profile_card(
         cols  = st.columns(ncols)
 
         if show_identity:
-            nat    = sg(col_nationalite, "")
-            p_num  = sg(col_num_passeport, "")
-            p_exp  = sg(col_exp_passeport, "")
             ci_num = sg(col_num_ci, "")
             ci_exp = sg(col_exp_ci, "")
             id_rows = []
-            if nat:    id_rows.append(("Nationalité", nat))
-            if p_num:  id_rows.append(("Passeport",
-                           p_num + (f"  ·  exp. {p_exp}" if p_exp else "")))
+
+            # ── Tags passeports (rouge=expiré, vert=valide) ───────────────────
+            if passeports_df is not None and not passeports_df.empty:
+                from datetime import date as _date
+                _today = _date.today().isoformat()   # "2026-05-31"
+                pp_tags = []
+                for _, pp in passeports_df.iterrows():
+                    num  = _safe_get(pp, col_pp_num, "?")
+                    nat  = _safe_get(pp, col_pp_nat, "")
+                    emis = _safe_get(pp, col_pp_emission, "")
+                    exp  = _safe_get(pp, col_pp_expiration, "")
+                    expired = bool(exp and exp != "—" and str(exp) < _today)
+                    bg  = "#450a0a" if expired else "#052e16"
+                    fg  = "#fca5a5" if expired else "#86efac"
+                    brd = "#ef4444" if expired else "#22c55e"
+                    tip = (f"Nationalité : {nat} | "
+                           f"Émis : {emis} | "
+                           f"Exp. : {exp}")
+                    lbl = f"{'✗' if expired else '✓'} {num}"
+                    pp_tags.append(
+                        f"<span title='{tip}' style='"
+                        f"background:{bg};color:{fg};"
+                        f"border:0.5px solid {brd};"
+                        f"font-size:.7rem;padding:2px 8px;border-radius:20px;"
+                        f"cursor:default;font-family:JetBrains Mono,monospace;"
+                        f"margin:1px;display:inline-block;'>{lbl}</span>"
+                    )
+                if pp_tags:
+                    id_rows.append(("Passeports", " ".join(pp_tags)))
+
             if ci_num: id_rows.append(("Carte d'identité",
                            ci_num + (f"  ·  exp. {ci_exp}" if ci_exp else "")))
             body = "".join(
@@ -2474,293 +2516,6 @@ def render_voyage_profile_card(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-def render_connection_page() -> bool:
-    """
-    Affiche la page de connexion à la base de données.
-    Retourne True si une connexion est active, False si on attend.
-    """
-    # Déjà connecté ?
-    if st.session_state.get("_db_adapter"):
-        return True
-
-    # Lecture depuis st.secrets (prioritaire sur le formulaire)
-    if "database" in st.secrets:
-        try:
-            adapter = connect_db(dict(st.secrets["database"]))
-            schema  = introspect_schema_from_db(adapter)
-            st.session_state["_db_adapter"]        = adapter
-            st.session_state["_db_schema_override"] = schema
-            return True
-        except Exception as e:
-            st.error(f"⚠️ Connexion via `st.secrets` échouée : {e}")
-
-    # Formulaire interactif
-    st.markdown("""
-    <div style='max-width:520px;margin:4rem auto 0;'>
-    <h1 style='font-size:1.6rem;margin-bottom:.3rem;'>🔌 Connexion</h1>
-    <p style='color:#6b7280;margin-bottom:1.5rem;font-size:.9rem;'>
-    Connectez une base réelle ou utilisez la démo SQLite intégrée.</p>
-    </div>""", unsafe_allow_html=True)
-
-    with st.container():
-        c1, c2, c3 = st.columns([1, 3, 1])
-        with c2:
-            db_type = st.selectbox(
-                "Type de base de données",
-                ["sqlite_demo", "sqlite_file", "postgresql", "mysql"],
-                format_func=lambda x: {
-                    "sqlite_demo":  "🧪 SQLite  — données de démonstration",
-                    "sqlite_file":  "📁 SQLite  — fichier local",
-                    "postgresql":   "🐘 PostgreSQL",
-                    "mysql":        "🐬 MySQL / MariaDB",
-                }[x],
-                key="conn_db_type",
-            )
-
-            cfg: dict = {"type": db_type}
-
-            if db_type == "sqlite_demo":
-                st.info("Aucune config requise. La démo contient des clients et voyages fictifs.")
-
-            elif db_type == "sqlite_file":
-                cfg["type"] = "sqlite"
-                cfg["path"] = st.text_input("Chemin du fichier .db",
-                                             value="data.db", key="conn_path")
-                st.caption("Chemin absolu ou relatif au répertoire de l'app.")
-
-            else:
-                host_default = "localhost"
-                port_default = 5432 if db_type == "postgresql" else 3306
-                col_h, col_p = st.columns([3, 1])
-                cfg["host"]     = col_h.text_input("Hôte", host_default, key="conn_host")
-                cfg["port"]     = col_p.number_input("Port", value=port_default,
-                                                      min_value=1, max_value=65535,
-                                                      key="conn_port")
-                cfg["database"] = st.text_input("Nom de la base", key="conn_db")
-                col_u, col_pw = st.columns(2)
-                cfg["user"]     = col_u.text_input("Utilisateur", key="conn_user")
-                cfg["password"] = col_pw.text_input("Mot de passe", type="password",
-                                                     key="conn_pw")
-                st.caption(
-                    "💡 En production, stockez ces infos dans `.streamlit/secrets.toml` "
-                    "pour ne pas les saisir à chaque démarrage.")
-
-            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-            btn_col, _ = st.columns([2, 1])
-            with btn_col:
-                if st.button("🔌 Connecter", type="primary", use_container_width=True):
-                    if db_type == "sqlite_demo":
-                        # Mode démo : utilise get_connection() déjà en mémoire
-                        adapter = DBAdapter("sqlite", get_connection(), "Démo SQLite")
-                        st.session_state["_db_adapter"]        = adapter
-                        st.session_state["_db_schema_override"] = None
-                        st.rerun()
-                    else:
-                        with st.spinner("Connexion en cours…"):
-                            try:
-                                adapter = connect_db(cfg)
-                                schema  = introspect_schema_from_db(adapter)
-                                st.session_state["_db_adapter"]        = adapter
-                                st.session_state["_db_schema_override"] = schema
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ Connexion échouée : {e}")
-    return False
-# ══════════════════════════════════════════════════════════════════════════════
-OPERATORS = {
-    "Contient":     ("LIKE", lambda v: f"%{v}%"),
-    "Commence par": ("LIKE", lambda v: f"{v}%"),
-    "Finit par":    ("LIKE", lambda v: f"%{v}"),
-    "Égal à":       ("=",    lambda v: v),
-    "Différent de": ("!=",   lambda v: v),
-    "Supérieur à":  (">",    lambda v: v),
-    "Inférieur à":  ("<",    lambda v: v),
-}
-OP_LABELS = list(OPERATORS.keys())
-
-MONTHS_FR = ["","Janvier","Février","Mars","Avril","Mai","Juin",
-             "Juillet","Août","Septembre","Octobre","Novembre","Décembre"]
-
-
-def is_date_col(col: str) -> bool:
-    return "date" in col.lower()
-
-
-def build_date_value(year: int, month: int, day: int) -> str:
-    if month == 0:   return f"{year:04d}"
-    elif day == 0:   return f"{year:04d}-{month:02d}"
-    else:            return f"{year:04d}-{month:02d}-{day:02d}"
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ARBRE BINAIRE & SQL
-# ══════════════════════════════════════════════════════════════════════════════
-def build_tree(conditions):
-    if not conditions: return None
-    tree = {"type": "leaf", "idx": 0}
-    for i in range(1, len(conditions)):
-        tree = {"type": "branch", "op": conditions[i]["join_op"],
-                "left": tree, "right": {"type": "leaf", "idx": i}}
-    return tree
-
-
-def _sql_from_tree(node, conditions, params, display):
-    if node["type"] == "leaf":
-        c = conditions[node["idx"]]
-        if c.get("is_bulk"):
-            sym, fn = OPERATORS[c["operator"]]
-            if display:
-                clauses = [f"{c['column']} {sym} '{fn(v)}'" for v in c["values"]]
-            else:
-                clauses = []
-                for v in c["values"]:
-                    clauses.append(f"{c['column']} {sym} ?")
-                    params.append(fn(v))
-            return "(" + " OR ".join(clauses) + ")"
-        sym, fn = OPERATORS[c["operator"]]
-        val = fn(c["value"])
-        if display: return f"{c['column']} {sym} '{val}'"
-        params.append(val)
-        return f"{c['column']} {sym} ?"
-    sql_op = "AND" if node["op"] == "ET" else "OR"
-    L = _sql_from_tree(node["left"],  conditions, params, display)
-    R = _sql_from_tree(node["right"], conditions, params, display)
-    return f"({L} {sql_op} {R})"
-
-
-def build_where(conditions, display=False):
-    if not conditions: return "1=1", []
-    params = []
-    where = _sql_from_tree(build_tree(conditions), conditions, params, display)
-    return where, params
-
-
-def build_query(table, conditions, joins=None, schema=None):
-    where, params = build_where(conditions)
-
-    if joins and schema:
-        # Compter les occurrences de chaque nom de colonne
-        col_count: dict = {}
-        for t in [table] + [j["table"] for j in joins]:
-            for c in schema[t]["columns"]:
-                col_count[c] = col_count.get(c, 0) + 1
-
-        # SELECT explicite : alias table_col pour toute colonne ambiguë
-        parts = []
-        for t in [table] + [j["table"] for j in joins]:
-            for c in schema[t]["columns"]:
-                if col_count[c] > 1:
-                    parts.append(f"{t}.{c} AS {t}_{c}")
-                else:
-                    parts.append(f"{t}.{c}")
-        sql = "SELECT " + ", ".join(parts) + f"\nFROM {table}"
-    else:
-        sql = f"SELECT *\nFROM {table}"
-
-    for j in (joins or []):
-        sql += f"\n{j['type']} {j['table']} ON {j['on']}"
-    if where != "1=1":
-        sql += f"\nWHERE {where}"
-    return sql, params
-
-
-def build_query_display(table, conditions, joins=None, schema=None):
-    where, _ = build_where(conditions, display=True)
-
-    if joins and schema:
-        col_count: dict = {}
-        for t in [table] + [j["table"] for j in joins]:
-            for c in schema[t]["columns"]:
-                col_count[c] = col_count.get(c, 0) + 1
-        parts = []
-        for t in [table] + [j["table"] for j in joins]:
-            for c in schema[t]["columns"]:
-                parts.append(f"{t}.{c} AS {t}_{c}" if col_count[c] > 1 else f"{t}.{c}")
-        sql = "SELECT " + ", ".join(parts) + f"\nFROM {table}"
-    else:
-        sql = f"SELECT *\nFROM {table}"
-
-    for j in (joins or []):
-        sql += f"\n{j['type']} {j['table']} ON {j['on']}"
-    if where != "1=1":
-        sql += f"\nWHERE {where}"
-    return sql
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# JOINTURES  —  détection automatique via les clés étrangères
-# ══════════════════════════════════════════════════════════════════════════════
-def get_available_joins(schema: dict, base_table: str, current_joins: list) -> list:
-    """
-    Retourne les tables joignables (non encore utilisées) avec leur condition
-    ON auto-détectée à partir des clés étrangères du schéma.
-    """
-    already_used = {base_table} | {j["table"] for j in current_joins}
-    result, seen = [], set()
-    for candidate, info in schema.items():
-        if candidate in already_used or candidate in seen:
-            continue
-        for existing in already_used:
-            # FK d'une table existante → candidate
-            for fk in schema[existing].get("fk", []):
-                if fk["ref"] == candidate:
-                    result.append({
-                        "table":    candidate,
-                        "on":       f"{existing}.{fk['col']} = {candidate}.{fk['ref_col']}",
-                        "relation": f"{existing}.{fk['col']}  →  {candidate}.{fk['ref_col']}",
-                    })
-                    seen.add(candidate)
-                    break
-            if candidate in seen:
-                break
-            # FK du candidate → une table existante
-            for fk in info.get("fk", []):
-                if fk["ref"] == existing:
-                    result.append({
-                        "table":    candidate,
-                        "on":       f"{candidate}.{fk['col']} = {existing}.{fk['ref_col']}",
-                        "relation": f"{candidate}.{fk['col']}  →  {existing}.{fk['ref_col']}",
-                    })
-                    seen.add(candidate)
-                    break
-            if candidate in seen:
-                break
-    return result
-
-
-def get_all_columns(schema: dict, base_table: str, joins: list) -> list:
-    """Colonnes qualifiées (table.col) de la table de base + toutes les jointures."""
-    cols = [f"{base_table}.{c}" for c in schema[base_table]["columns"]]
-    for j in joins:
-        cols += [f"{j['table']}.{c}" for c in schema[j["table"]]["columns"]]
-    return cols
-
-
-def get_column_labels(schema: dict, base_table: str, joins: list) -> dict:
-    """
-    Retourne {col_key: label_affiché} pour le sélecteur de conditions.
-
-    • Sans jointure : col_key = "nom"          → label = "Nom"
-    • Avec jointure : col_key = "clients.nom"  → label = "Nom  (clients)"
-
-    Les labels sont lus depuis schema[table]["labels"] si présents,
-    sinon le nom technique de la colonne est utilisé tel quel.
-    """
-    has_joins = bool(joins)
-    result: dict = {}
-
-    for col in schema[base_table]["columns"]:
-        raw = schema[base_table].get("labels", {}).get(col, col)
-        key = f"{base_table}.{col}" if has_joins else col
-        result[key] = f"{raw}  ({base_table})" if has_joins else raw
-
-    for j in joins:
-        t = j["table"]
-        for col in schema[t]["columns"]:
-            raw = schema[t].get("labels", {}).get(col, col)
-            result[f"{t}.{col}"] = f"{raw}  ({t})"
-
-    return result
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3402,32 +3157,16 @@ def run_app(schema: dict, enrich: dict):
                     "Construisez vos requêtes SQL visuellement, sans écrire une ligne de code.</p>",
                     unsafe_allow_html=True)
     with col_cfg:
-        db_label = _get_db().label
+        cfg_name = os.path.basename(CONFIG_PATH)
         st.markdown(
             f"<div style='text-align:right;padding-bottom:2px;'>"
-            f"<span style='font-size:.68rem;color:#4ade80;"
-            f"font-family:JetBrains Mono,monospace;'>🟢 {db_label}</span></div>",
+            f"<span style='font-size:.68rem;color:#475569;"
+            f"font-family:JetBrains Mono,monospace;'>⚙ {cfg_name}</span></div>",
             unsafe_allow_html=True)
-        disc_col, cfg_col = st.columns(2)
-        with disc_col:
-            if st.button("⏏", key="db_disconnect", help="Changer de base de données",
-                         use_container_width=True):
-                st.session_state.pop("_db_adapter", None)
-                st.session_state.pop("_db_schema_override", None)
-                st.session_state["results"] = None
-                st.cache_data.clear()
-                st.rerun()
-        with cfg_col:
-            cfg_name = os.path.basename(CONFIG_PATH)
-            st.markdown(
-                f"<div style='text-align:right;padding-bottom:2px;'>"
-                f"<span style='font-size:.68rem;color:#475569;"
-                f"font-family:JetBrains Mono,monospace;'>⚙ {cfg_name}</span></div>",
-                unsafe_allow_html=True)
-            if st.button("↺", key="cfg_reload", help=f"Recharger {CONFIG_PATH}",
-                         use_container_width=True):
-                st.cache_data.clear()
-                st.rerun()
+        if st.button("↺", key="cfg_reload", help=f"Recharger {CONFIG_PATH}",
+                     use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
     with col_pop:
         _render_history_popover(conn, user_id, enrich)
 
@@ -3721,21 +3460,11 @@ def run_app(schema: dict, enrich: dict):
             _id_col     = _find_col(df, "id", "clients_id")
             _statut_col = _find_col(df, "statut", "clients_statut")
 
-            # ── Toggle vue ────────────────────────────────────────────────────
-            _sel  = st.radio(
-                "Vue", ["👤  Clients", "✈️  Voyages"],
-                horizontal=True, label_visibility="collapsed",
-                key="tab2_view_radio",
-            )
-            _view = "client" if "Clients" in _sel else "voyage"
-            st.markdown("<div style='margin-bottom:6px'></div>", unsafe_allow_html=True)
-
-            # ── Chargement compagnons (commun aux deux vues) ──────────────────
+            # Préchargement des compagnons (voyages de groupe)
             try:
                 _all_voy = _get_db().read_sql("""
                     SELECT v.groupe_voyage_id, v.client_id,
-                           c.nom, c.prenom,
-                           c.profession, c.ville, c.statut
+                           c.nom, c.prenom, c.profession, c.ville, c.statut
                     FROM voyages v
                     JOIN clients c ON v.client_id = c.id
                     WHERE v.groupe_voyage_id IS NOT NULL
@@ -3743,92 +3472,97 @@ def run_app(schema: dict, enrich: dict):
             except Exception:
                 _all_voy = None
 
-            # ─────────────────────────────────────────────────────────────────
-            # VUE CLIENT
-            # ─────────────────────────────────────────────────────────────────
-            if _view == "client":
-                if has_nom and has_prenom and has_dest and _id_col:
-                    for client_id, group in df.groupby(_id_col, sort=False):
-                        render_client_profile_card(
-                            client_row=group.iloc[0],
-                            voyages_df=group,
-                            all_voyages_df=_all_voy,
-                        )
+            # Préchargement de tous les passeports
+            try:
+                _all_pp = _get_db().read_sql("SELECT * FROM passeports")
+            except Exception:
+                _all_pp = None
 
-                elif has_nom and has_prenom:
-                    cols_grid = st.columns(2)
-                    for i, (_, row) in enumerate(df.iterrows()):
-                        _s_val     = row.get(_statut_col) if _statut_col else None
-                        stat_color = "#4ade80" if str(_s_val or "") == "actif" else "#f87171"
-                        initials   = (str(row.get("prenom", "?"))[:1] + str(row.get("nom", "?"))[:1]).upper()
-                        cols_grid[i % 2].markdown(
-                            f"<div style='background:#13151d;border:1px solid #1e2130;"
-                            f"border-radius:12px;padding:16px 18px;margin-bottom:12px;'>"
-                            f"<div style='display:flex;align-items:center;gap:12px;margin-bottom:10px;'>"
-                            f"<div style='width:40px;height:40px;border-radius:50%;"
-                            f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
-                            f"display:flex;align-items:center;justify-content:center;"
-                            f"font-weight:700;color:white;'>{initials}</div>"
-                            f"<div><div style='font-weight:700;color:#e8eaf0;'>"
-                            f"{row.get('prenom','')} {row.get('nom','')}</div>"
-                            f"<div style='font-size:.78rem;color:#64748b;'>{row.get('ville','')} · "
-                            f"<span style='color:{stat_color};'>{row.get('statut','')}</span></div></div></div>"
-                            f"<div style='font-size:.78rem;color:#64748b;line-height:1.8;'>"
-                            f"📧 {row.get('email','')}<br>"
-                            f"📞 {row.get('telephone','')}<br>"
-                            f"📅 Membre depuis {str(row.get('date_inscription',''))[:10]}"
-                            f"</div></div>",
-                            unsafe_allow_html=True)
+            if has_nom and has_prenom and has_dest and _id_col:
+                # Vue clients + voyages : fiche profil complète
+                for client_id, group in df.groupby(_id_col, sort=False):
+                    if _all_pp is not None:
+                        try:
+                            _cid = str(int(float(group.iloc[0].get(_id_col) or 0)))
+                            _pp  = _all_pp[_all_pp["client_id"].astype(str) == _cid]
+                        except Exception:
+                            _pp = None
+                    else:
+                        _pp = None
+                    render_client_profile_card(
+                        client_row=group.iloc[0],
+                        voyages_df=group,
+                        all_voyages_df=_all_voy,
+                        passeports_df=_pp,
+                    )
+
+            elif has_nom and has_prenom:
+                # Vue clients seuls : cartes simples
+                cols_grid = st.columns(2)
+                for i, (_, row) in enumerate(df.iterrows()):
+                    _s_val     = row.get(_statut_col) if _statut_col else None
+                    stat_color = "#4ade80" if str(_s_val or "") == "actif" else "#f87171"
+                    initials   = (str(row.get("prenom", "?"))[:1] + str(row.get("nom", "?"))[:1]).upper()
+                    cols_grid[i % 2].markdown(
+                        f"<div style='background:#13151d;border:1px solid #1e2130;"
+                        f"border-radius:12px;padding:16px 18px;margin-bottom:12px;'>"
+                        f"<div style='display:flex;align-items:center;gap:12px;'>"
+                        f"<div style='width:40px;height:40px;border-radius:50%;"
+                        f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
+                        f"display:flex;align-items:center;justify-content:center;"
+                        f"font-weight:700;color:white;'>{initials}</div>"
+                        f"<div><div style='font-weight:600;color:#e8eaf0;'>"
+                        f"{row.get('prenom','')} {row.get('nom','')}</div>"
+                        f"<div style='font-size:.8rem;color:#64748b;'>"
+                        f"{row.get('ville','')} &nbsp;·&nbsp; "
+                        f"<span style='color:{stat_color};'>{row.get('statut','')}</span>"
+                        f"</div></div></div></div>",
+                        unsafe_allow_html=True)
 
             elif has_dest:
-                    cols_grid = st.columns(2)
-                    for i, (_, row) in enumerate(df.iterrows()):
-                        cont      = row.get("continent", "")
-                        tv        = row.get("type_voyage", "")
-                        cont_col  = CONT_COLORS.get(cont, "#6b7280")
-                        tv_col    = TYPE_COLORS.get(tv, "#6b7280")
-                        note_v    = row.get("note", None)
-                        stars     = ("⭐" * int(note_v)) if note_v and not pd.isna(note_v) else "—"
-                        cnom      = ""
-                        if has_client_nom:
-                            cnom = f"{row.get('client_prenom','')} {row.get('client_nom','')}".strip()
-                        elif has_client_id:
-                            cnom = f"Client #{int(row.get('client_id', 0))}"
-                        cols_grid[i % 2].markdown(
-                            f"<div style='background:#13151d;border:1px solid #1e2130;"
-                            f"border-top:3px solid {cont_col};"
-                            f"border-radius:12px;padding:16px 18px;margin-bottom:12px;'>"
-                            f"<div style='display:flex;justify-content:space-between;align-items:start;'>"
-                            f"<div><div style='font-weight:700;font-size:1rem;color:#e8eaf0;'>{row.get('destination','')}</div>"
-                            f"<div style='font-size:.78rem;color:#64748b;'>{row.get('pays_destination','')} · "
-                            f"<span style='color:{cont_col};'>{cont}</span></div></div>"
-                            f"<span style='background:{tv_col}22;color:{tv_col};"
-                            f"font-size:.7rem;padding:3px 10px;border-radius:10px;white-space:nowrap;'>{tv}</span></div>"
-                            f"<div style='margin:10px 0;font-size:.8rem;color:#94a3b8;'>"
-                            f"📅 {str(row.get('date_depart',''))[:10]} → {str(row.get('date_retour',''))[:10]}"
-                            f"{'&nbsp;&nbsp;·&nbsp;&nbsp;🕒 ' + str(row.get('duree_jours','')) + 'j' if row.get('duree_jours') else ''}"
-                            f"{'&nbsp;&nbsp;·&nbsp;&nbsp;' + cnom if cnom else ''}</div>"
-                            f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
-                            f"<span style='color:#64748b;font-size:.78rem;'>🏨 {row.get('hotel','')}</span>"
-                            f"<div style='text-align:right;'>"
-                            f"<div style='color:#4ade80;font-weight:700;font-family:JetBrains Mono,monospace;'>"
-                            f"{int(row.get('budget', 0)):,}€</div>"
-                            f"<div style='font-size:.75rem;'>{stars}</div></div></div></div>",
-                            unsafe_allow_html=True)
-            # ─────────────────────────────────────────────────────────────────
-            # VUE VOYAGE
-            # ─────────────────────────────────────────────────────────────────
-            else:
-                if has_dest:
-                    for _, vrow in df.iterrows():
-                        render_voyage_profile_card(
-                            voyage_row=vrow,
-                            all_voyages_df=_all_voy,
-                            col_statut_client=_statut_col or "statut",
-                        )
-                else:
-                    st.info("Aucune colonne de destination trouvée pour la vue voyage.")
+                # Vue voyages seuls : cartes destination
+                cols_grid = st.columns(2)
+                for i, (_, row) in enumerate(df.iterrows()):
+                    cont     = row.get("continent", "")
+                    tv       = row.get("type_voyage", "")
+                    cont_col = CONT_COLORS.get(cont, "#6b7280")
+                    tv_col   = TYPE_COLORS.get(tv,   "#6b7280")
+                    note_v   = row.get("note", None)
+                    stars    = ("⭐" * int(note_v)) if note_v and not pd.isna(note_v) else "—"
+                    cnom     = ""
+                    if has_client_nom:
+                        cnom = f"{row.get('client_prenom','')} {row.get('client_nom','')}".strip()
+                    elif has_client_id:
+                        cnom = f"Client #{int(row.get('client_id', 0))}"
+                    cols_grid[i % 2].markdown(
+                        f"<div style='background:#13151d;border:1px solid #1e2130;"
+                        f"border-top:3px solid {cont_col};"
+                        f"border-radius:12px;padding:16px 18px;margin-bottom:12px;'>"
+                        f"<div style='display:flex;justify-content:space-between;align-items:start;'>"
+                        f"<div><div style='font-weight:700;font-size:1rem;color:#e8eaf0;'>"
+                        f"{row.get('destination','')}</div>"
+                        f"<div style='font-size:.78rem;color:#64748b;'>{row.get('pays_destination','')} · "
+                        f"<span style='color:{cont_col};'>{cont}</span></div></div>"
+                        f"<span style='background:{tv_col}22;color:{tv_col};"
+                        f"font-size:.7rem;padding:3px 10px;border-radius:10px;"
+                        f"white-space:nowrap;'>{tv}</span></div>"
+                        f"<div style='margin:10px 0;font-size:.8rem;color:#94a3b8;'>"
+                        f"📅 {str(row.get('date_depart',''))[:10]} → "
+                        f"{str(row.get('date_retour',''))[:10]}"
+                        f"{'&nbsp;&nbsp;·&nbsp;&nbsp;🕒 ' + str(row.get('duree_jours','')) + 'j' if row.get('duree_jours') else ''}"
+                        f"{'&nbsp;&nbsp;·&nbsp;&nbsp;' + cnom if cnom else ''}</div>"
+                        f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+                        f"<span style='color:#64748b;font-size:.78rem;'>🏨 {row.get('hotel','')}</span>"
+                        f"<div style='text-align:right;'>"
+                        f"<div style='color:#4ade80;font-weight:700;"
+                        f"font-family:JetBrains Mono,monospace;'>"
+                        f"{int(row.get('budget', 0)):,}€</div>"
+                        f"<div style='font-size:.75rem;'>{stars}</div>"
+                        f"</div></div></div>",
+                        unsafe_allow_html=True)
 
+            else:
+                st.info("Aucune vue fiche disponible pour ces colonnes.")
         # ── TAB 3 — Timeline ──────────────────────────────────────────────────
         with tab3:
             if not has_depart:
@@ -4106,24 +3840,13 @@ def run_app(schema: dict, enrich: dict):
 # ══════════════════════════════════════════════════════════════════════════════
 
 # 1. Page de connexion — affichée tant qu'aucune DB n'est configurée
-if not render_connection_page():
-    st.stop()
-
-# 2. Chargement de la configuration YAML/TOML
-#    (le schéma peut être surchargé par l'introspection automatique)
 try:
     _cfg   = load_config()
-    SCHEMA = st.session_state.get("_db_schema_override") or _cfg["schema"]
+    SCHEMA = _cfg["schema"]
     ENRICH = _cfg.get("enrich", {})
-except FileNotFoundError:
-    # Pas de config.yaml : utilise uniquement le schéma découvert depuis la DB
-    SCHEMA = st.session_state.get("_db_schema_override")
-    ENRICH = {}
-    if not SCHEMA:
-        st.error(
-            "⚠️ Aucun fichier `config.yaml` trouvé et aucun schéma auto-découvert. "
-            "Créez `config.yaml` ou connectez une base de données réelle.")
-        st.stop()
+except FileNotFoundError as _e:
+    st.error(f"⚠️ {_e}")
+    st.stop()
 except (ValueError, KeyError) as _e:
     st.error(f"⚠️ Erreur dans le fichier de config : {_e}")
     st.stop()

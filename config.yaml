@@ -1,0 +1,245 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SQL Query Builder — Configuration externe
+# Modifiez ce fichier et cliquez sur ↺ dans l'app pour recharger sans redémarrer.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Schéma des tables ─────────────────────────────────────────────────────────
+# Chaque table déclare ses colonnes, sa clé primaire (pk) et ses clés
+# étrangères sortantes (fk). Les jointures disponibles sont détectées
+# automatiquement à partir des fk.
+
+schema:
+
+  employes:
+    columns:
+      - id
+      - nom
+      - prenom
+      - poste
+      - email
+      - telephone
+      - statut
+      - date_embauche
+    pk: id
+    fk: []
+    labels:
+      id:            "ID Employé"
+      nom:           "Nom"
+      prenom:        "Prénom"
+      poste:         "Poste"
+      email:         "Email"
+      telephone:     "Téléphone"
+      statut:        "Statut"
+      date_embauche: "Date d'embauche"
+
+  affectations:
+    columns:
+      - id
+      - employe_id
+      - agence
+      - ville
+      - pays
+      - continent
+      - date_debut
+      - date_fin
+    pk: id
+    fk:
+      - col:     employe_id
+        ref:     employes
+        ref_col: id
+    labels:
+      id:          "ID Affectation"
+      employe_id:  "ID Employé"
+      agence:      "Agence"
+      ville:       "Ville"
+      pays:        "Pays"
+      continent:   "Continent"
+      date_debut:  "Date de début"
+      date_fin:    "Date de fin"
+
+  passeports:
+    columns:
+      - id
+      - client_id
+      - num_passeport
+      - nationalite
+      - date_emission
+      - date_expiration
+    pk: id
+    fk:
+      - col:     client_id
+        ref:     clients
+        ref_col: id
+    labels:
+      id:             "ID Passeport"
+      client_id:      "ID Client"
+      num_passeport:  "N° Passeport"
+      nationalite:    "Nationalité"
+      date_emission:  "Date d'émission"
+      date_expiration:"Date d'expiration"
+
+  clients:
+    columns:
+      - id
+      - nom
+      - prenom
+      - email
+      - telephone
+      - ville
+      - pays
+      - date_inscription
+      - statut
+      - num_carte_identite
+      - date_expiration_ci
+      - profession
+      - employeur
+      - situation_pro
+    pk: id
+    fk: []
+    labels:
+      id:                 "ID Client"
+      nom:                "Nom"
+      prenom:             "Prénom"
+      email:              "Email"
+      telephone:          "Téléphone"
+      ville:              "Ville"
+      pays:               "Pays"
+      date_inscription:   "Date d'inscription"
+      statut:             "Statut"
+      num_carte_identite: "N° Carte d'identité"
+      date_expiration_ci: "Exp. Carte d'identité"
+      profession:         "Profession"
+      employeur:          "Employeur"
+      situation_pro:      "Situation pro." 
+
+  voyages:
+    columns:
+      - id
+      - client_id
+      - destination
+      - pays_destination
+      - continent
+      - date_depart
+      - date_retour
+      - duree_jours
+      - type_voyage
+      - transport
+      - hotel
+      - budget
+      - statut
+      - note
+      - groupe_voyage_id
+    pk: id
+    fk:
+      - col:     client_id  # colonne locale
+        ref:     clients    # table référencée
+        ref_col: id         # colonne référencée
+    labels:
+      id:               "ID Voyage"
+      client_id:        "ID Client"
+      destination:      "Destination"
+      pays_destination: "Pays de destination"
+      continent:        "Continent"
+      date_depart:      "Date de départ"
+      date_retour:      "Date de retour"
+      duree_jours:      "Durée (jours)"
+      type_voyage:      "Type de voyage"
+      transport:        "Transport"
+      hotel:            "Hôtel"
+      budget:           "Budget (€)"
+      statut:           "Statut"
+      note:             "Note"
+      groupe_voyage_id: "Groupe de voyage" 
+
+
+# ── Enrichissement inter-tables ───────────────────────────────────────────────
+# Pour chaque table source, définit la requête qui joint une table liée.
+# {where} est remplacé dynamiquement par le filtre courant.
+
+enrich:
+
+  passeports:
+    other: clients
+    label: clients
+    count_sql: >-
+      SELECT COUNT(*) AS total FROM clients
+      WHERE id IN (SELECT client_id FROM passeports WHERE {where})
+    select_sql: |
+      SELECT c.*, p.num_passeport, p.nationalite,
+             p.date_emission, p.date_expiration
+      FROM passeports p
+      JOIN clients c ON p.client_id = c.id
+      WHERE p.id IN (SELECT id FROM passeports WHERE {where})
+      ORDER BY p.date_expiration DESC
+
+  employes:
+    other: affectations
+    label: affectations
+    count_sql: >-
+      SELECT COUNT(*) AS total FROM affectations
+      WHERE employe_id IN (SELECT id FROM employes WHERE {where})
+    select_sql: |
+      SELECT e.*, a.agence, a.ville, a.pays, a.continent,
+             a.date_debut, a.date_fin
+      FROM employes e
+      JOIN affectations a ON e.id = a.employe_id
+      WHERE e.id IN (SELECT id FROM employes WHERE {where})
+      ORDER BY a.date_debut DESC
+
+  affectations:
+    other: employes
+    label: employes
+    count_sql: >-
+      SELECT COUNT(*) AS total FROM employes
+      WHERE id IN (SELECT employe_id FROM affectations WHERE {where})
+    select_sql: |
+      SELECT a.*, e.nom, e.prenom, e.poste, e.statut, e.date_embauche
+      FROM affectations a
+      JOIN employes e ON a.employe_id = e.id
+      WHERE a.id IN (SELECT id FROM affectations WHERE {where})
+      ORDER BY a.date_debut DESC
+
+  clients:
+    other: voyages
+    label: voyages
+    count_sql: >-
+      SELECT COUNT(*) AS total
+      FROM voyages v
+      WHERE v.client_id IN (SELECT id FROM clients WHERE {where})
+    select_sql: |
+      SELECT
+          c.id, c.nom, c.prenom, c.email, c.telephone, c.ville, c.pays,
+          c.date_inscription, c.statut,
+          v.id          AS voyage_id,
+          v.destination, v.pays_destination, v.continent,
+          v.date_depart, v.date_retour, v.duree_jours, v.type_voyage,
+          v.transport, v.hotel, v.budget,
+          v.statut      AS statut_voyage,
+          v.note
+      FROM clients c
+      JOIN voyages v ON c.id = v.client_id
+      WHERE c.id IN (SELECT id FROM clients WHERE {where})
+
+  voyages:
+    other: clients
+    label: clients
+    count_sql: >-
+      SELECT COUNT(*) AS total
+      FROM clients c
+      WHERE c.id IN (SELECT client_id FROM voyages WHERE {where})
+    select_sql: |
+      SELECT
+          v.id, v.client_id, v.destination, v.pays_destination, v.continent,
+          v.date_depart, v.date_retour, v.duree_jours, v.type_voyage,
+          v.transport, v.hotel, v.budget, v.statut, v.note,
+          c.nom         AS client_nom,
+          c.prenom      AS client_prenom,
+          c.email       AS client_email,
+          c.telephone   AS client_telephone,
+          c.ville       AS client_ville,
+          c.pays        AS client_pays,
+          c.date_inscription AS client_date_inscription,
+          c.statut      AS client_statut
+      FROM voyages v
+      JOIN clients c ON v.client_id = c.id
+      WHERE v.id IN (SELECT id FROM voyages WHERE {where})
