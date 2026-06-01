@@ -593,6 +593,23 @@ def get_available_joins(schema: dict, base_table: str, current_joins: list) -> l
     return result
 
 
+def revalidate_joins(base_table: str, joins: list) -> list:
+    """
+    Après suppression d'une jointure, retire en cascade toutes celles dont
+    la condition ON référence une table qui n'est plus disponible.
+    Les tables dans ON sont extraites sous la forme 'table.col = table.col'.
+    """
+    valid: list = []
+    available: set = {base_table}
+    for j in joins:
+        on_tables = {part.strip().split(".")[0] for part in j["on"].split("=")}
+        other = on_tables - {j["table"]}
+        if other.issubset(available):
+            valid.append(j)
+            available.add(j["table"])
+    return valid
+
+
 def get_all_columns(schema: dict, base_table: str, joins: list) -> list:
     """Colonnes qualifiées (table.col) de la table de base + toutes les jointures."""
     cols = [f"{base_table}.{c}" for c in schema[base_table]["columns"]]
@@ -3470,6 +3487,9 @@ def run_app(schema: dict, enrich: dict):
                         help=f"Retirer {_j['table']}",
                     ):
                         st.session_state.joins.pop(_i)
+                        st.session_state.joins = revalidate_joins(
+                            current_table, st.session_state.joins
+                        )
                         st.session_state.conditions = []
                         st.session_state.results    = None
                         st.rerun()
