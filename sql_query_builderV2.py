@@ -3622,6 +3622,10 @@ def run_app(schema: dict, enrich: dict):
     # Labels lisibles pour le sélecteur de colonnes
     col_labels_map = get_column_labels(schema, current_table, st.session_state.joins)
 
+    # Réinitialise new_col si la valeur mémorisée n'appartient pas aux colonnes actuelles
+    if st.session_state.get("new_col") not in current_cols:
+        st.session_state.pop("new_col", None)
+
     st.markdown("### ➕ Ajouter une condition")
     fa, fb, fc, fd = st.columns([2, 2, 3, 1])
     with fa:
