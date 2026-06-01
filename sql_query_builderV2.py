@@ -3378,6 +3378,9 @@ def _render_history_popover(conn, user_id: str, enrich: dict) -> None:
                 st.session_state.enrich_count        = None
                 st.session_state["_last_cell_click"] = None
                 st.session_state["_auto_execute"]    = True
+                for _k in ("new_col", "new_op", "new_val",
+                           "new_year", "new_month", "new_day", "new_join"):
+                    st.session_state.pop(_k, None)
                 st.rerun()
 
         st.divider()
@@ -3512,6 +3515,9 @@ def run_app(schema: dict, enrich: dict):
             st.session_state.results        = None
             st.session_state.enrich_count   = None
             st.session_state.joins          = []
+            for _k in ("new_col", "new_op", "new_val",
+                       "new_year", "new_month", "new_day", "new_join"):
+                st.session_state.pop(_k, None)
             st.rerun()
 
     st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
