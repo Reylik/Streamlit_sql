@@ -1,0 +1,182 @@
+schema:
+  passeports:
+    columns:
+    - id
+    - client_id
+    - num_passeport
+    - nationalite
+    - date_emission
+    - date_expiration
+    pk: id
+    fk:
+    - col: client_id
+      ref: clients
+      ref_col: id
+    labels:
+      id: ID Passeport
+      client_id: ID Client
+      num_passeport: N° Passeport
+      nationalite: Nationalité
+      date_emission: Date d'émission
+      date_expiration: Date d'expiration
+  clients:
+    columns:
+    - id
+    - nom
+    - prenom
+    - email
+    - telephone
+    - ville
+    - pays
+    - date_inscription
+    - statut
+    - num_carte_identite
+    - date_expiration_ci
+    - profession
+    - employeur
+    - situation_pro
+    pk: id
+    fk: []
+    labels:
+      id: ID Client
+      nom: Nom
+      prenom: Prénom
+      email: Email
+      telephone: Téléphone
+      ville: Ville
+      pays: Pays
+      date_inscription: Date d'inscription
+      statut: Statut
+      num_carte_identite: N° Carte d'identité
+      date_expiration_ci: Exp. Carte d'identité
+      profession: Profession
+      employeur: Employeur
+      situation_pro: Situation pro.
+  voyages:
+    columns:
+    - id
+    - client_id
+    - destination
+    - pays_destination
+    - continent
+    - date_depart
+    - date_retour
+    - duree_jours
+    - type_voyage
+    - transport
+    - hotel
+    - budget
+    - statut
+    - note
+    - groupe_voyage_id
+    pk: id
+    fk:
+    - col: client_id
+      ref: clients
+      ref_col: id
+    labels:
+      id: ID Voyage
+      client_id: ID Client
+      destination: Destination
+      pays_destination: Pays de destination
+      continent: Continent
+      date_depart: Date de départ
+      date_retour: Date de retour
+      duree_jours: Durée (jours)
+      type_voyage: Type de voyage
+      transport: Transport
+      hotel: Hôtel
+      budget: Budget (€)
+      statut: Statut
+      note: Note
+      groupe_voyage_id: Groupe de voyage
+  employes:
+    columns:
+    - id
+    - nom
+    - prenom
+    - poste
+    - email
+    - telephone
+    - statut
+    - date_embauche
+    pk: id
+    fk: []
+    labels:
+      id: ID Employé
+      nom: Nom
+      prenom: Prénom
+      poste: Poste
+      email: Email
+      telephone: Téléphone
+      statut: Statut
+      date_embauche: Date d'embauche
+  affectations:
+    columns:
+    - id
+    - employe_id
+    - agence
+    - ville
+    - pays
+    - continent
+    - date_debut
+    - date_fin
+    pk: id
+    fk:
+    - col: employe_id
+      ref: employes
+      ref_col: id
+    labels:
+      id: ID
+      employe_id: ID Employé
+      agence: Agence
+      ville: Ville
+      pays: Pays
+      continent: Continent
+      date_debut: Date début
+      date_fin: Date fin
+enrich:
+  passeports:
+    other: clients
+    label: clients
+    count_sql: SELECT COUNT(*) AS total FROM clients WHERE id IN (SELECT client_id
+      FROM passeports WHERE {where})
+    select_sql: "SELECT c.*, p.num_passeport, p.nationalite,\n       p.date_emission,\
+      \ p.date_expiration\nFROM passeports p\nJOIN clients c ON p.client_id = c.id\n\
+      WHERE p.id IN (SELECT id FROM passeports WHERE {where})\nORDER BY p.date_expiration\
+      \ DESC\n"
+  employes:
+    other: affectations
+    label: affectations
+    count_sql: SELECT COUNT(*) AS total FROM affectations WHERE employe_id IN (SELECT
+      id FROM employes WHERE {where})
+    select_sql: "SELECT e.*, a.agence, a.ville AS ville_affectation,\n       a.pays\
+      \ AS pays_affectation, a.continent,\n       a.date_debut, a.date_fin\nFROM employes\
+      \ e\nJOIN affectations a ON e.id = a.employe_id\nWHERE e.id IN (SELECT id FROM\
+      \ employes WHERE {where})\nORDER BY a.date_debut DESC\n"
+  affectations:
+    other: employes
+    label: employes
+    count_sql: SELECT COUNT(*) AS total FROM employes WHERE id IN (SELECT employe_id
+      FROM affectations WHERE {where})
+    select_sql: "SELECT e.*, a.agence, a.ville AS ville_affectation,\n       a.pays,\
+      \ a.continent, a.date_debut, a.date_fin\nFROM affectations a\nJOIN employes\
+      \ e ON a.employe_id = e.id\nWHERE a.id IN (SELECT id FROM affectations WHERE\
+      \ {where})\n"
+  clients:
+    other: voyages
+    label: voyages
+    count_sql: SELECT COUNT(*) AS total FROM voyages WHERE client_id IN ({ids})
+    select_sql: "SELECT c.*,\n       v.id AS voyage_id, v.destination, v.pays_destination,\
+      \ v.continent,\n       v.date_depart, v.date_retour, v.duree_jours,\n      \
+      \ v.type_voyage, v.budget, v.statut, v.note\nFROM clients c\nJOIN voyages v\
+      \ ON c.id = v.client_id\nWHERE c.id IN ({ids})\nORDER BY v.date_depart DESC\n"
+  voyages:
+    other: clients
+    label: clients
+    count_sql: SELECT COUNT(*) AS total FROM clients WHERE id IN (SELECT client_id
+      FROM voyages WHERE {where})
+    select_sql: "SELECT c.*, v.destination, v.pays_destination,\n       v.date_depart,\
+      \ v.date_retour, v.budget\nFROM voyages v\nJOIN clients c ON v.client_id = c.id\n\
+      WHERE v.id IN (SELECT id FROM voyages WHERE {where})\nORDER BY v.date_depart\
+      \ DESC\n"
