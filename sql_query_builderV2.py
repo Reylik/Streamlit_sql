@@ -55,6 +55,18 @@ hr{border-color:#1e2130!important;}
 ::-webkit-scrollbar-track{background:#0d0f14;}
 ::-webkit-scrollbar-thumb{background:#2a2d3e;border-radius:3px;}
 ::-webkit-scrollbar-thumb:hover{background:#6366f1;}
+div[data-testid="stHorizontalBlock"]:has(#join-del-anchor)
+  >div[data-testid="stColumn"]:last-child button{
+  background:linear-gradient(135deg,#dc2626,#991b1b)!important;
+  color:#fff!important;font-size:.7rem!important;
+  padding:3px 10px!important;min-height:unset!important;
+  border-radius:6px!important;line-height:1.6!important;
+  box-shadow:0 2px 8px rgba(220,38,38,.3)!important;}
+div[data-testid="stHorizontalBlock"]:has(#join-del-anchor)
+  >div[data-testid="stColumn"]:last-child button:hover{
+  transform:translateY(-1px)!important;
+  box-shadow:0 4px 12px rgba(220,38,38,.4)!important;
+  background:linear-gradient(135deg,#ef4444,#b91c1c)!important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -3411,8 +3423,11 @@ def run_app(schema: dict, enrich: dict):
         n_active = len(st.session_state.joins)
         n_avail  = len(available_joins)
 
-        # ── Ligne visuelle : base ══🔗══ jointures actives en vert ───────────
+        # ── Construction du visuel connecteur ────────────────────────────────
+        # L'ancre #join-del-anchor est incluse dans le HTML du visuel pour que
+        # le CSS :has() cible précisément les boutons ✕ à droite.
         _v_parts = [
+            "<div id='join-del-anchor' style='display:none;'></div>"
             f"<div style='background:#1d4ed822;color:#93c5fd;border:0.5px solid #1d4ed8;"
             f"border-radius:20px;padding:5px 14px;font-size:.82rem;white-space:nowrap;"
             f"font-family:JetBrains Mono,monospace;'>🔒 {current_table}</div>"
@@ -3433,47 +3448,51 @@ def run_app(schema: dict, enrich: dict):
                 f"font-family:JetBrains Mono,monospace;"
                 f"box-shadow:0 0 8px #22c55e33;'>✓ {_jv['table']}</div>"
             )
-        st.markdown(
+        _visual_html = (
             "<div style='display:flex;align-items:center;gap:0;flex-wrap:wrap;"
-            "margin-bottom:10px;padding:10px 16px;"
-            "background:#0f111a;border:1px solid #1e2130;border-radius:12px;'>"
-            + "".join(_v_parts) + "</div>",
-            unsafe_allow_html=True,
+            "padding:8px 12px;background:#0f111a;border:1px solid #1e2130;"
+            "border-radius:12px;'>"
+            + "".join(_v_parts) + "</div>"
         )
 
-        # ── Boutons d'action ─────────────────────────────────────────────────
-        _pill_cols = st.columns(
-            [2] + [1.5] * n_active + [1.5] * n_avail + [4],
-        )
+        if n_active:
+            # Colonnes : [visuel large] | [boutons ✕ petits rouges]
+            _left, _right = st.columns([4, 2])
+            with _left:
+                st.markdown(_visual_html, unsafe_allow_html=True)
+            with _right:
+                # Boutons ✕ alignés horizontalement (CSS les colorie en rouge)
+                _del_cols = st.columns(n_active)
+                for _i, _j in enumerate(list(st.session_state.joins)):
+                    if _del_cols[_i].button(
+                        f"✕ {_j['table']}", key=f"del_join_{_i}",
+                        use_container_width=True,
+                        help=f"Retirer {_j['table']}",
+                    ):
+                        st.session_state.joins.pop(_i)
+                        st.session_state.conditions = []
+                        st.session_state.results    = None
+                        st.rerun()
+        else:
+            st.markdown(_visual_html, unsafe_allow_html=True)
 
-        # Tables déjà jointes (bouton ✕ pour retirer)
-        for _i, _j in enumerate(list(st.session_state.joins)):
-            if _pill_cols[1 + _i].button(
-                f"✕ {_j['table']}", key=f"del_join_{_i}",
-                use_container_width=True,
-                help=f"Retirer {_j['table']}",
-            ):
-                st.session_state.joins.pop(_i)
-                st.session_state.conditions = []
-                st.session_state.results    = None
-                st.rerun()
-
-        # Tables disponibles (bouton ＋ pour ajouter)
-        _off = 1 + n_active
-        for _i, _aj in enumerate(available_joins):
-            if _pill_cols[_off + _i].button(
-                f"＋ {_aj['table']}", key=f"add_join_{_aj['table']}",
-                use_container_width=True,
-                help=f"Joindre {_aj['table']}  —  {_aj['on']}",
-            ):
-                st.session_state.joins.append({
-                    "table": _aj["table"],
-                    "type":  "LEFT JOIN",
-                    "on":    _aj["on"],
-                })
-                st.session_state.conditions = []
-                st.session_state.results    = None
-                st.rerun()
+        # ── Boutons ＋ pour ajouter des jointures ─────────────────────────────
+        if n_avail:
+            _add_cols = st.columns([1.5] * n_avail + [4])
+            for _i, _aj in enumerate(available_joins):
+                if _add_cols[_i].button(
+                    f"＋ {_aj['table']}", key=f"add_join_{_aj['table']}",
+                    use_container_width=True,
+                    help=f"Joindre {_aj['table']}  —  {_aj['on']}",
+                ):
+                    st.session_state.joins.append({
+                        "table": _aj["table"],
+                        "type":  "LEFT JOIN",
+                        "on":    _aj["on"],
+                    })
+                    st.session_state.conditions = []
+                    st.session_state.results    = None
+                    st.rerun()
 
         st.markdown("<div style='margin-bottom:4px'></div>", unsafe_allow_html=True)
 
