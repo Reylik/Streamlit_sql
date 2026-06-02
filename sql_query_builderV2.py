@@ -3004,7 +3004,12 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
         _render_node(sub, conditions, prefix_parts, is_last=is_last,
                      is_root=is_root, parent_op=parent_op)
     else:
-        op, right_idx = node["op"], node["right"]["idx"]
+        op = node["op"]
+        # node["right"] peut être un or_group (sans idx) → prendre le 1er enfant
+        _rn = node["right"]
+        right_idx = (_rn["children"][0]["idx"]
+                     if _rn.get("type") == "or_group"
+                     else _rn["idx"])
         if ph:
             w = max(prefix_len * 0.135, 0.35)
             ca, cb = st.columns([w, max(9 - w, 1)])
