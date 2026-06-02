@@ -55,18 +55,6 @@ hr{border-color:#1e2130!important;}
 ::-webkit-scrollbar-track{background:#0d0f14;}
 ::-webkit-scrollbar-thumb{background:#2a2d3e;border-radius:3px;}
 ::-webkit-scrollbar-thumb:hover{background:#6366f1;}
-div[data-testid="stHorizontalBlock"]:has(#join-del-anchor)
-  >div[data-testid="stColumn"]:last-child button{
-  background:linear-gradient(135deg,#dc2626,#991b1b)!important;
-  color:#fff!important;font-size:.7rem!important;
-  padding:3px 10px!important;min-height:unset!important;
-  border-radius:6px!important;line-height:1.6!important;
-  box-shadow:0 2px 8px rgba(220,38,38,.3)!important;}
-div[data-testid="stHorizontalBlock"]:has(#join-del-anchor)
-  >div[data-testid="stColumn"]:last-child button:hover{
-  transform:translateY(-1px)!important;
-  box-shadow:0 4px 12px rgba(220,38,38,.4)!important;
-  background:linear-gradient(135deg,#ef4444,#b91c1c)!important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -115,101 +103,41 @@ def get_connection():
     (11,9,'FP900001','Française','2018-12-25','2028-12-25'),
     (12,11,'FP110001','Française','2017-08-19','2027-08-19');
 
-    CREATE TABLE IF NOT EXISTS voyage_group(
-      id INTEGER PRIMARY KEY,
-      date_depart TEXT, date_retour TEXT, duree_jours INTEGER,
-      type_voyage TEXT, transport TEXT, statut TEXT, groupe_voyage_id INTEGER
-    );
-    INSERT INTO voyage_group VALUES
-    (1,'2023-04-10','2023-04-24',14,'Tourisme','Avion','terminé',1001),
-    (2,'2022-07-15','2022-07-22',7,'Tourisme','Train','terminé',NULL),
-    (3,'2023-08-01','2023-08-10',9,'Affaires','Avion','terminé',NULL),
-    (4,'2022-12-20','2022-12-27',7,'Tourisme','Avion','terminé',NULL),
-    (5,'2023-06-01','2023-06-15',14,'Détente','Avion','terminé',1002),
-    (6,'2024-03-10','2024-03-14',4,'City Break','Avion','terminé',NULL),
-    (7,'2023-01-05','2023-01-12',7,'Luxe','Avion','terminé',NULL),
-    (8,'2023-10-20','2023-10-27',7,'Culturel','Avion','terminé',NULL),
-    (9,'2024-05-01','2024-05-04',3,'City Break','Train','terminé',NULL),
-    (10,'2023-02-14','2023-02-21',7,'Lune de miel','Avion','terminé',1003),
-    (11,'2022-11-03','2022-11-06',3,'City Break','Avion','terminé',NULL),
-    (12,'2023-12-22','2024-01-05',14,'Tourisme','Avion','terminé',NULL),
-    (13,'2023-09-08','2023-09-15',7,'Culturel','Avion','terminé',NULL),
-    (14,'2023-03-15','2023-03-20',5,'Aventure','Avion','terminé',NULL),
-    (15,'2024-04-01','2024-04-10',9,'Culturel','Avion','terminé',NULL),
-    (16,'2023-05-18','2023-05-22',4,'City Break','Avion','terminé',NULL),
-    (17,'2023-07-01','2023-07-14',13,'Plage','Avion','terminé',1004),
-    (18,'2022-10-29','2022-10-31',2,'City Break','Train','terminé',NULL),
-    (19,'2023-11-10','2023-11-24',14,'Safari','Avion','terminé',NULL),
-    (20,'2024-02-14','2024-02-16',2,'Romantique','Train','terminé',NULL),
-    (21,'2024-01-15','2024-01-28',13,'Aventure','Avion','terminé',NULL),
-    (22,'2024-06-20','2024-06-28',8,'Affaires','Avion','à venir',NULL),
-    (23,'2024-09-01','2024-09-08',7,'Tourisme','Avion','à venir',NULL),
-    (24,'2024-08-10','2024-08-17',7,'Plage','Avion','à venir',NULL),
-    (25,'2023-04-10','2023-04-24',14,'Tourisme','Avion','terminé',1001),
-    (26,'2023-06-01','2023-06-15',14,'Détente','Avion','terminé',1002),
-    (27,'2023-02-14','2023-02-21',7,'Lune de miel','Avion','terminé',1003),
-    (28,'2023-07-01','2023-07-14',13,'Plage','Avion','terminé',1004);
-
-    CREATE TABLE IF NOT EXISTS voyage_place(
-      voyage_id INTEGER PRIMARY KEY,
-      destination TEXT, pays_destination TEXT, continent TEXT, hotel TEXT,
-      FOREIGN KEY(voyage_id) REFERENCES voyage_group(id)
-    );
-    INSERT INTO voyage_place VALUES
-    (1,'Tokyo','Japon','Asie','Grand Hyatt Tokyo'),
-    (2,'Barcelone','Espagne','Europe','Hotel Arts'),
-    (3,'New York','États-Unis','Amérique','Marriott Times Square'),
-    (4,'Rome','Italie','Europe','Hotel Eden'),
-    (5,'Bali','Indonésie','Asie','Four Seasons Bali'),
-    (6,'Lisbonne','Portugal','Europe','Bairro Alto Hotel'),
-    (7,'Dubai','Émirats Arabes Unis','Asie','Burj Al Arab'),
-    (8,'Marrakech','Maroc','Afrique','La Mamounia'),
-    (9,'Amsterdam','Pays-Bas','Europe','Hotel V Nesplein'),
-    (10,'Maldives','Maldives','Asie','Conrad Maldives'),
-    (11,'Prague','Tchéquie','Europe','Augustine Hotel'),
-    (12,'Sydney','Australie','Océanie','Park Hyatt Sydney'),
-    (13,'Athènes','Grèce','Europe','Hotel Grande Bretagne'),
-    (14,'Reykjavik','Islande','Europe','Ion Adventure Hotel'),
-    (15,'Kyoto','Japon','Asie','The Ritz-Carlton Kyoto'),
-    (16,'Séville','Espagne','Europe','Hotel Alfonso XIII'),
-    (17,'Cancún','Mexique','Amérique','Nizuc Resort'),
-    (18,'Berlin','Allemagne','Europe','Hotel de Rome'),
-    (19,'Cape Town','Afrique du Sud','Afrique','The Silo Hotel'),
-    (20,'Bruges','Belgique','Europe','Hotel Dukes Palace'),
-    (21,'Costa Rica','Costa Rica','Amérique','Nayara Springs'),
-    (22,'Singapour','Singapour','Asie','Marina Bay Sands'),
-    (23,'New York','États-Unis','Amérique','The Plaza'),
-    (24,'Tenerife','Espagne','Europe','Royal Hideaway'),
-    (25,'Tokyo','Japon','Asie','Grand Hyatt Tokyo'),
-    (26,'Bali','Indonésie','Asie','Four Seasons Bali'),
-    (27,'Maldives','Maldives','Asie','Conrad Maldives'),
-    (28,'Cancún','Mexique','Amérique','Nizuc Resort');
-
-    CREATE TABLE IF NOT EXISTS voyage_members(
-      voyage_id INTEGER PRIMARY KEY,
-      client_id INTEGER,
-      budget REAL, note INTEGER,
-      FOREIGN KEY(voyage_id) REFERENCES voyage_group(id),
-      FOREIGN KEY(client_id) REFERENCES clients(id)
-    );
-    INSERT INTO voyage_members VALUES
-    (1,1,3200.00,5),(2,1,1100.00,4),(3,2,2800.00,4),(4,2,1350.00,5),
-    (5,3,2900.00,5),(6,3,750.00,4),(7,4,5500.00,5),(8,5,1800.00,5),
-    (9,5,620.00,3),(10,6,6200.00,5),(11,6,580.00,4),(12,7,4100.00,5),
-    (13,7,1250.00,4),(14,8,1700.00,4),(15,9,3600.00,5),(16,9,890.00,4),
-    (17,10,3100.00,5),(18,10,410.00,3),(19,11,4800.00,5),(20,11,490.00,4),
-    (21,12,3900.00,5),(22,1,3400.00,NULL),(23,3,2600.00,NULL),(24,5,1500.00,NULL),
-    (25,2,3200.00,5),(26,11,2900.00,4),(27,7,6200.00,5),(28,9,3100.00,4);
-
-    CREATE VIEW IF NOT EXISTS voyages AS
-    SELECT vm.voyage_id AS id, vm.client_id,
-           vp.destination, vp.pays_destination, vp.continent,
-           vg.date_depart, vg.date_retour, vg.duree_jours,
-           vg.type_voyage, vg.transport, vp.hotel,
-           vm.budget, vg.statut, vm.note, vg.groupe_voyage_id
-    FROM voyage_members vm
-    JOIN voyage_place vp ON vp.voyage_id = vm.voyage_id
-    JOIN voyage_group vg ON vg.id       = vm.voyage_id;
+    CREATE TABLE IF NOT EXISTS voyages(id INTEGER PRIMARY KEY,client_id INTEGER,
+      destination TEXT,pays_destination TEXT,continent TEXT,
+      date_depart TEXT,date_retour TEXT,duree_jours INTEGER,
+      type_voyage TEXT,transport TEXT,hotel TEXT,
+      budget REAL,statut TEXT,note INTEGER,groupe_voyage_id INTEGER,
+      FOREIGN KEY(client_id) REFERENCES clients(id));
+    INSERT INTO voyages VALUES
+    (1,1,'Tokyo','Japon','Asie','2023-04-10','2023-04-24',14,'Tourisme','Avion','Grand Hyatt Tokyo',3200.00,'terminé',5,1001),
+    (2,1,'Barcelone','Espagne','Europe','2022-07-15','2022-07-22',7,'Tourisme','Train','Hotel Arts',1100.00,'terminé',4,NULL),
+    (3,2,'New York','États-Unis','Amérique','2023-08-01','2023-08-10',9,'Affaires','Avion','Marriott Times Square',2800.00,'terminé',4,NULL),
+    (4,2,'Rome','Italie','Europe','2022-12-20','2022-12-27',7,'Tourisme','Avion','Hotel Eden',1350.00,'terminé',5,NULL),
+    (5,3,'Bali','Indonésie','Asie','2023-06-01','2023-06-15',14,'Détente','Avion','Four Seasons Bali',2900.00,'terminé',5,1002),
+    (6,3,'Lisbonne','Portugal','Europe','2024-03-10','2024-03-14',4,'City Break','Avion','Bairro Alto Hotel',750.00,'terminé',4,NULL),
+    (7,4,'Dubai','Émirats Arabes Unis','Asie','2023-01-05','2023-01-12',7,'Luxe','Avion','Burj Al Arab',5500.00,'terminé',5,NULL),
+    (8,5,'Marrakech','Maroc','Afrique','2023-10-20','2023-10-27',7,'Culturel','Avion','La Mamounia',1800.00,'terminé',5,NULL),
+    (9,5,'Amsterdam','Pays-Bas','Europe','2024-05-01','2024-05-04',3,'City Break','Train','Hotel V Nesplein',620.00,'terminé',3,NULL),
+    (10,6,'Maldives','Maldives','Asie','2023-02-14','2023-02-21',7,'Lune de miel','Avion','Conrad Maldives',6200.00,'terminé',5,1003),
+    (11,6,'Prague','Tchéquie','Europe','2022-11-03','2022-11-06',3,'City Break','Avion','Augustine Hotel',580.00,'terminé',4,NULL),
+    (12,7,'Sydney','Australie','Océanie','2023-12-22','2024-01-05',14,'Tourisme','Avion','Park Hyatt Sydney',4100.00,'terminé',5,NULL),
+    (13,7,'Athènes','Grèce','Europe','2023-09-08','2023-09-15',7,'Culturel','Avion','Hotel Grande Bretagne',1250.00,'terminé',4,NULL),
+    (14,8,'Reykjavik','Islande','Europe','2023-03-15','2023-03-20',5,'Aventure','Avion','Ion Adventure Hotel',1700.00,'terminé',4,NULL),
+    (15,9,'Kyoto','Japon','Asie','2024-04-01','2024-04-10',9,'Culturel','Avion','The Ritz-Carlton Kyoto',3600.00,'terminé',5,NULL),
+    (16,9,'Séville','Espagne','Europe','2023-05-18','2023-05-22',4,'City Break','Avion','Hotel Alfonso XIII',890.00,'terminé',4,NULL),
+    (17,10,'Cancún','Mexique','Amérique','2023-07-01','2023-07-14',13,'Plage','Avion','Nizuc Resort',3100.00,'terminé',5,1004),
+    (18,10,'Berlin','Allemagne','Europe','2022-10-29','2022-10-31',2,'City Break','Train','Hotel de Rome',410.00,'terminé',3,NULL),
+    (19,11,'Cape Town','Afrique du Sud','Afrique','2023-11-10','2023-11-24',14,'Safari','Avion','The Silo Hotel',4800.00,'terminé',5,NULL),
+    (20,11,'Bruges','Belgique','Europe','2024-02-14','2024-02-16',2,'Romantique','Train','Hotel Dukes Palace',490.00,'terminé',4,NULL),
+    (21,12,'Costa Rica','Costa Rica','Amérique','2024-01-15','2024-01-28',13,'Aventure','Avion','Nayara Springs',3900.00,'terminé',5,NULL),
+    (22,1,'Singapour','Singapour','Asie','2024-06-20','2024-06-28',8,'Affaires','Avion','Marina Bay Sands',3400.00,'à venir',NULL,NULL),
+    (23,3,'New York','États-Unis','Amérique','2024-09-01','2024-09-08',7,'Tourisme','Avion','The Plaza',2600.00,'à venir',NULL,NULL),
+    (24,5,'Tenerife','Espagne','Europe','2024-08-10','2024-08-17',7,'Plage','Avion','Royal Hideaway',1500.00,'à venir',NULL,NULL),
+    (25,2,'Tokyo','Japon','Asie','2023-04-10','2023-04-24',14,'Tourisme','Avion','Grand Hyatt Tokyo',3200.00,'terminé',5,1001),
+    (26,11,'Bali','Indonésie','Asie','2023-06-01','2023-06-15',14,'Détente','Avion','Four Seasons Bali',2900.00,'terminé',4,1002),
+    (27,7,'Maldives','Maldives','Asie','2023-02-14','2023-02-21',7,'Lune de miel','Avion','Conrad Maldives',6200.00,'terminé',5,1003),
+    (28,9,'Cancún','Mexique','Amérique','2023-07-01','2023-07-14',13,'Plage','Avion','Nizuc Resort',3100.00,'terminé',4,1004);
 
     CREATE TABLE IF NOT EXISTS employes(
       id INTEGER PRIMARY KEY, nom TEXT, prenom TEXT, poste TEXT,
@@ -519,11 +447,30 @@ def build_date_value(year: int, month: int, day: int) -> str:
 # ARBRE BINAIRE & SQL
 # ══════════════════════════════════════════════════════════════════════════════
 def build_tree(conditions):
-    if not conditions: return None
-    tree = {"type": "leaf", "idx": 0}
+    """
+    OU local : s'applique à la dernière feuille/groupe, pas à l'arbre entier.
+
+    [A, B(ET), C(OU), D(ET)]  →  A AND (B OR C) AND D
+    [A, B(OU), C(OU)]         →  (A OR B OR C)
+    """
+    if not conditions:
+        return None
+    and_items: list = [{"type": "leaf", "idx": 0}]
     for i in range(1, len(conditions)):
-        tree = {"type": "branch", "op": conditions[i]["join_op"],
-                "left": tree, "right": {"type": "leaf", "idx": i}}
+        join_op  = conditions[i]["join_op"]
+        new_leaf = {"type": "leaf", "idx": i}
+        if join_op == "OU":
+            last = and_items[-1]
+            if last["type"] == "or_group":
+                last["children"].append(new_leaf)
+            else:
+                and_items[-1] = {"type": "or_group",
+                                  "children": [last, new_leaf]}
+        else:
+            and_items.append(new_leaf)
+    tree = and_items[0]
+    for item in and_items[1:]:
+        tree = {"type": "branch", "op": "ET", "left": tree, "right": item}
     return tree
 
 
@@ -545,6 +492,12 @@ def _sql_from_tree(node, conditions, params, display):
         if display: return f"{c['column']} {sym} '{val}'"
         params.append(val)
         return f"{c['column']} {sym} ?"
+    if node["type"] == "or_group":
+        # Groupe OR local : (A OR B OR C)
+        parts = [_sql_from_tree(child, conditions, params, display)
+                 for child in node["children"]]
+        return "(" + " OR ".join(parts) + ")"
+    # branch (ET dans le nouvel arbre)
     sql_op = "AND" if node["op"] == "ET" else "OR"
     L = _sql_from_tree(node["left"],  conditions, params, display)
     R = _sql_from_tree(node["right"], conditions, params, display)
@@ -651,23 +604,6 @@ def get_available_joins(schema: dict, base_table: str, current_joins: list) -> l
             if candidate in seen:
                 break
     return result
-
-
-def revalidate_joins(base_table: str, joins: list) -> list:
-    """
-    Après suppression d'une jointure, retire en cascade toutes celles dont
-    la condition ON référence une table qui n'est plus disponible.
-    Les tables dans ON sont extraites sous la forme 'table.col = table.col'.
-    """
-    valid: list = []
-    available: set = {base_table}
-    for j in joins:
-        on_tables = {part.strip().split(".")[0] for part in j["on"].split("=")}
-        other = on_tables - {j["table"]}
-        if other.issubset(available):
-            valid.append(j)
-            available.add(j["table"])
-    return valid
 
 
 def get_all_columns(schema: dict, base_table: str, joins: list) -> list:
@@ -2477,10 +2413,6 @@ def render_client_profile_card(
         with col_voy:
             d_str = f"  ·  {int(float(duree))}j" \
                     if duree and duree != "—" else ""
-            _star_html = (
-                f'<span style="font-size:.72rem;margin-left:4px;">{stars}</span>'
-                if stars else ""
-            )
             st.markdown(
                 f"<div style='background:#13151d;"
                 f"border-left:1px solid #1e2130;border-right:1px solid #1e2130;"
@@ -2498,7 +2430,7 @@ def render_client_profile_card(
                 f"{d_str}</span></div>"
                 f"<span style='background:{tc}22;color:{tc};font-size:.68rem;"
                 f"padding:2px 7px;border-radius:10px;white-space:nowrap;'>{tv}</span>"
-                f"{_star_html}"
+                f"{'<span style=\"font-size:.72rem;margin-left:4px;\">'+stars+'</span>' if stars else ''}"
                 f"</div></div>",
                 unsafe_allow_html=True)
 
@@ -2534,10 +2466,6 @@ def render_client_profile_card(
                     cp_ini = ((mp[:1] if mp else "")+(mn[:1] if mn else "")).upper() or "?"
                     sc2    = "#4ade80" if mstat == "actif" else "#f87171"
                     meta   = "  ·  ".join(filter(None, [mprof, mvil]))
-                    _meta_div = (
-                        f'<div style="font-size:.72rem;color:#64748b;margin-top:2px;">{meta}</div>'
-                        if meta else ""
-                    )
                     st.markdown(
                         f"<div style='display:flex;align-items:flex-start;gap:10px;"
                         f"padding:8px 0;border-top:1px solid #1e2130;'>"
@@ -2549,7 +2477,7 @@ def render_client_profile_card(
                         f"<div style='flex:1;'>"
                         f"<div style='font-weight:600;font-size:.85rem;color:#e8eaf0;'>"
                         f"{mp} {mn}</div>"
-                        f"{_meta_div}"
+                        f"{'<div style=\"font-size:.72rem;color:#64748b;margin-top:2px;\">' + meta + '</div>' if meta else ''}"
                         f"<div style='margin-top:3px;'>"
                         f"<span style='font-size:.68rem;padding:1px 7px;border-radius:20px;"
                         f"background:{sc2}22;color:{sc2};'>{mstat or '—'}</span>"
@@ -2670,14 +2598,6 @@ def render_voyage_profile_card(
         f"🏨 {hotel}"     if hotel     and hotel     != "—" else "",
         f"✈️ {transport}" if transport and transport != "—" else "",
     ]))
-    _ht_div = (
-        f'<div style="color:#94a3b8;font-size:.75rem;margin-top:2px;">{ht}</div>'
-        if ht else ""
-    )
-    _stars_div = (
-        f'<div style="font-size:.8rem;flex-shrink:0;">{stars}</div>'
-        if stars else ""
-    )
     st.markdown(
         f"<div style='background:#13151d;border:1px solid #1e2130;"
         f"border-bottom:none;border-radius:12px 12px 0 0;"
@@ -2687,9 +2607,9 @@ def render_voyage_profile_card(
         f"<div>"
         f"<div style='font-weight:700;font-size:1rem;color:#e8eaf0;'>{dest}</div>"
         f"<div style='color:#64748b;font-size:.77rem;margin-top:3px;'>{meta}</div>"
-        f"{_ht_div}"
+        f"{'<div style=\'color:#94a3b8;font-size:.75rem;margin-top:2px;\'>' + ht + '</div>' if ht else ''}"
         f"</div>"
-        f"{_stars_div}"
+        f"{'<div style=\'font-size:.8rem;flex-shrink:0;\'>' + stars + '</div>' if stars else ''}"
         f"</div></div>",
         unsafe_allow_html=True)
 
@@ -2724,16 +2644,6 @@ def render_voyage_profile_card(
                     m_ini = ((mp[:1] if mp else "")+(mn[:1] if mn else "")).upper() or "?"
                     m_sc  = "#4ade80" if mstat=="actif" else ("#f87171" if mstat=="inactif" else "#94a3b8")
                     m_meta= "  ·  ".join(filter(None, [mprof, mvil]))
-                    _m_meta_div = (
-                        f'<div style="font-size:.72rem;color:#64748b;margin-top:1px;">{m_meta}</div>'
-                        if m_meta else ""
-                    )
-                    _mstat_div = (
-                        f'<div style="margin-top:2px;"><span style="font-size:.68rem;'
-                        f'padding:1px 7px;border-radius:20px;background:{m_sc}22;'
-                        f'color:{m_sc};">{mstat}</span></div>'
-                        if mstat and mstat != "—" else ""
-                    )
                     st.markdown(
                         f"<div style='display:flex;align-items:flex-start;gap:10px;"
                         f"padding:7px 0;border-top:1px solid #1e2130;'>"
@@ -2745,8 +2655,8 @@ def render_voyage_profile_card(
                         f"<div style='flex:1;'>"
                         f"<div style='font-weight:600;font-size:.83rem;color:#e8eaf0;'>"
                         f"{mp} {mn}</div>"
-                        f"{_m_meta_div}"
-                        f"{_mstat_div}"
+                        f"{'<div style=\"font-size:.72rem;color:#64748b;margin-top:1px;\">' + m_meta + '</div>' if m_meta else ''}"
+                        f"{'<div style=\"margin-top:2px;\"><span style=\"font-size:.68rem;padding:1px 7px;border-radius:20px;background:'+m_sc+'22;color:'+m_sc+';\">'+mstat+'</span></div>' if mstat and mstat != '—' else ''}"
                         f"</div></div>",
                         unsafe_allow_html=True)
         else:
@@ -2762,10 +2672,6 @@ def render_voyage_profile_card(
         sc_c  = "#4ade80" if vsg(col_statut_client) == "actif" else "#f87171"
         ini_c = ((prenom_c[:1] if prenom_c else "")+(nom_c[:1] if nom_c else "")).upper() or "?"
         meta_c = "  ·  ".join(filter(None, [vsg(col_profession,""), vsg(col_ville,"")]))
-        _meta_c_span = (
-            f'<span style="font-size:.72rem;color:#64748b;margin-left:8px;">{meta_c}</span>'
-            if meta_c else ""
-        )
         st.markdown(
             f"<div style='background:#13151d;border:1px solid #1e2130;"
             f"border-top:1px solid #2a2d3e;border-radius:0 0 12px 12px;"
@@ -2777,7 +2683,7 @@ def render_voyage_profile_card(
             f"<div style='flex:1;'>"
             f"<span style='font-weight:600;font-size:.84rem;color:#e8eaf0;'>"
             f"{prenom_c} {nom_c}</span>"
-            f"{_meta_c_span}"
+            f"{'<span style=\"font-size:.72rem;color:#64748b;margin-left:8px;\">' + meta_c + '</span>' if meta_c else ''}"
             f"</div>"
             f"<span style='font-size:.68rem;padding:2px 8px;border-radius:20px;"
             f"background:{sc_c}22;color:{sc_c};'>{vsg(col_statut_client,'')}</span>"
@@ -3089,6 +2995,14 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
                             unsafe_allow_html=True)
                 with c2:
                     _small_edit_button(idx)
+    elif node["type"] == "or_group":
+        # Groupe OR local : convertir en arbre binaire pour le rendu
+        children = node["children"]
+        sub = children[0]
+        for child in children[1:]:
+            sub = {"type": "branch", "op": "OU", "left": sub, "right": child}
+        _render_node(sub, conditions, prefix_parts, is_last=is_last,
+                     is_root=is_root, parent_op=parent_op)
     else:
         op, right_idx = node["op"], node["right"]["idx"]
         if ph:
@@ -3378,9 +3292,6 @@ def _render_history_popover(conn, user_id: str, enrich: dict) -> None:
                 st.session_state.enrich_count        = None
                 st.session_state["_last_cell_click"] = None
                 st.session_state["_auto_execute"]    = True
-                for _k in ("new_col", "new_op", "new_val",
-                           "new_year", "new_month", "new_day", "new_join"):
-                    st.session_state.pop(_k, None)
                 st.rerun()
 
         st.divider()
@@ -3515,9 +3426,6 @@ def run_app(schema: dict, enrich: dict):
             st.session_state.results        = None
             st.session_state.enrich_count   = None
             st.session_state.joins          = []
-            for _k in ("new_col", "new_op", "new_val",
-                       "new_year", "new_month", "new_day", "new_join"):
-                st.session_state.pop(_k, None)
             st.rerun()
 
     st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
@@ -3533,82 +3441,49 @@ def run_app(schema: dict, enrich: dict):
             "margin-bottom:6px;'>Sources de données</div>",
             unsafe_allow_html=True)
 
+        # Calcul du nombre de colonnes : base + actives + disponibles + spacer
         n_active = len(st.session_state.joins)
         n_avail  = len(available_joins)
-
-        # ── Construction du visuel connecteur ────────────────────────────────
-        # L'ancre #join-del-anchor est incluse dans le HTML du visuel pour que
-        # le CSS :has() cible précisément les boutons ✕ à droite.
-        _v_parts = [
-            "<div id='join-del-anchor' style='display:none;'></div>"
-            f"<div style='background:#1d4ed822;color:#93c5fd;border:0.5px solid #1d4ed8;"
-            f"border-radius:20px;padding:5px 14px;font-size:.82rem;white-space:nowrap;"
-            f"font-family:JetBrains Mono,monospace;'>🔒 {current_table}</div>"
-        ]
-        for _jv in st.session_state.joins:
-            _v_parts.append(
-                "<div style='display:flex;align-items:center;'>"
-                "<div style='width:26px;height:2px;"
-                "background:linear-gradient(90deg,#1d4ed8,#22c55e);'></div>"
-                "<span style='font-size:1rem;margin:0 3px;line-height:1;'>🔗</span>"
-                "<div style='width:26px;height:2px;background:#22c55e;'></div>"
-                "</div>"
-            )
-            _v_parts.append(
-                f"<div style='background:#052e1644;color:#4ade80;"
-                f"border:1.5px solid #22c55e;border-radius:20px;"
-                f"padding:5px 14px;font-size:.82rem;white-space:nowrap;"
-                f"font-family:JetBrains Mono,monospace;"
-                f"box-shadow:0 0 8px #22c55e33;'>✓ {_jv['table']}</div>"
-            )
-        _visual_html = (
-            "<div style='display:flex;align-items:center;gap:0;flex-wrap:wrap;"
-            "padding:8px 12px;background:#0f111a;border:1px solid #1e2130;"
-            "border-radius:12px;'>"
-            + "".join(_v_parts) + "</div>"
+        _pill_cols = st.columns(
+            [2] + [1.5] * n_active + [1.5] * n_avail + [4],
         )
 
-        if n_active:
-            # Colonnes : [visuel large] | [boutons ✕ petits rouges]
-            _left, _right = st.columns([4, 2])
-            with _left:
-                st.markdown(_visual_html, unsafe_allow_html=True)
-            with _right:
-                # Boutons ✕ alignés horizontalement (CSS les colorie en rouge)
-                _del_cols = st.columns(n_active)
-                for _i, _j in enumerate(list(st.session_state.joins)):
-                    if _del_cols[_i].button(
-                        f"✕ {_j['table']}", key=f"del_join_{_i}",
-                        use_container_width=True,
-                        help=f"Retirer {_j['table']}",
-                    ):
-                        st.session_state.joins.pop(_i)
-                        st.session_state.joins = revalidate_joins(
-                            current_table, st.session_state.joins
-                        )
-                        st.session_state.conditions = []
-                        st.session_state.results    = None
-                        st.rerun()
-        else:
-            st.markdown(_visual_html, unsafe_allow_html=True)
+        # Table de base (verrouillée)
+        _pill_cols[0].markdown(
+            f"<div style='background:#1d4ed822;color:#93c5fd;"
+            f"border:0.5px solid #1d4ed8;border-radius:20px;"
+            f"padding:4px 12px;font-size:.8rem;text-align:center;"
+            f"white-space:nowrap;'>🔒 {current_table}</div>",
+            unsafe_allow_html=True)
 
-        # ── Boutons ＋ pour ajouter des jointures ─────────────────────────────
-        if n_avail:
-            _add_cols = st.columns([1.5] * n_avail + [4])
-            for _i, _aj in enumerate(available_joins):
-                if _add_cols[_i].button(
-                    f"＋ {_aj['table']}", key=f"add_join_{_aj['table']}",
-                    use_container_width=True,
-                    help=f"Joindre {_aj['table']}  —  {_aj['on']}",
-                ):
-                    st.session_state.joins.append({
-                        "table": _aj["table"],
-                        "type":  "LEFT JOIN",
-                        "on":    _aj["on"],
-                    })
-                    st.session_state.conditions = []
-                    st.session_state.results    = None
-                    st.rerun()
+        # Tables déjà jointes (bouton ✕ pour retirer)
+        for _i, _j in enumerate(list(st.session_state.joins)):
+            if _pill_cols[1 + _i].button(
+                f"✕ {_j['table']}", key=f"del_join_{_i}",
+                use_container_width=True,
+                help=f"Retirer {_j['table']}",
+            ):
+                st.session_state.joins.pop(_i)
+                st.session_state.conditions = []
+                st.session_state.results    = None
+                st.rerun()
+
+        # Tables disponibles (bouton ＋ pour ajouter)
+        _off = 1 + n_active
+        for _i, _aj in enumerate(available_joins):
+            if _pill_cols[_off + _i].button(
+                f"＋ {_aj['table']}", key=f"add_join_{_aj['table']}",
+                use_container_width=True,
+                help=f"Joindre {_aj['table']}  —  {_aj['on']}",
+            ):
+                st.session_state.joins.append({
+                    "table": _aj["table"],
+                    "type":  "LEFT JOIN",
+                    "on":    _aj["on"],
+                })
+                st.session_state.conditions = []
+                st.session_state.results    = None
+                st.rerun()
 
         st.markdown("<div style='margin-bottom:4px'></div>", unsafe_allow_html=True)
 
@@ -3621,10 +3496,6 @@ def run_app(schema: dict, enrich: dict):
     # ── Ajout de condition ────────────────────────────────────────────────────
     # Labels lisibles pour le sélecteur de colonnes
     col_labels_map = get_column_labels(schema, current_table, st.session_state.joins)
-
-    # Réinitialise new_col si la valeur mémorisée n'appartient pas aux colonnes actuelles
-    if st.session_state.get("new_col") not in current_cols:
-        st.session_state.pop("new_col", None)
 
     st.markdown("### ➕ Ajouter une condition")
     fa, fb, fc, fd = st.columns([2, 2, 3, 1])
@@ -3970,16 +3841,6 @@ def run_app(schema: dict, enrich: dict):
                             cnom = f"{row.get('prenom','')} {row.get('nom','')}".strip()
                         left_pct  = round((dep - d_min).days / span * 100, 1)
                         width_pct = max(round(duree / span * 100, 1), 1.5)
-                        _cnom_span = (
-                            f'<span style="color:#94a3b8;font-size:.78rem;"> · {cnom}</span>'
-                            if cnom else ""
-                        )
-                        _budget_span = (
-                            f'<span style="font-size:.75rem;color:#4ade80;'
-                            f'font-family:JetBrains Mono,monospace;">'
-                            f'{int(row.get("budget", 0))}€</span>'
-                            if row.get("budget") else ""
-                        )
                         st.markdown(
                             f"<div style='background:#13151d;border:1px solid #1e2130;"
                             f"border-radius:10px;padding:12px 16px;margin-bottom:8px;'>"
@@ -3987,7 +3848,7 @@ def run_app(schema: dict, enrich: dict):
                             f"<span style='width:8px;height:8px;border-radius:50%;"
                             f"background:{cont_col};display:inline-block;flex-shrink:0;'></span>"
                             f"<span style='font-weight:600;color:#e8eaf0;font-size:.9rem;'>{row.get('destination','')}</span>"
-                            f"{_cnom_span}"
+                            f"{'<span style=\"color:#94a3b8;font-size:.78rem;\"> · ' + cnom + '</span>' if cnom else ''}"
                             f"<span style='margin-left:auto;color:#64748b;font-size:.75rem;'>"
                             f"{dep.strftime('%d %b %Y')} → {ret.strftime('%d %b %Y')} · {duree}j</span></div>"
                             f"<div style='position:relative;height:10px;background:#1e293b;"
@@ -3998,7 +3859,7 @@ def run_app(schema: dict, enrich: dict):
                             f"<div style='margin-top:7px;display:flex;gap:6px;flex-wrap:wrap;'>"
                             f"<span style='background:{tv_col}22;color:{tv_col};font-size:.7rem;"
                             f"padding:2px 8px;border-radius:10px;'>{tv}</span>"
-                            f"{_budget_span}"
+                            f"{'<span style=\"font-size:.75rem;color:#4ade80;font-family:JetBrains Mono,monospace;\">' + str(int(row.get('budget',0))) + '€</span>' if row.get('budget') else ''}"
                             f"<span style='font-size:.72rem;'>{stars}</span>"
                             f"</div></div>",
                             unsafe_allow_html=True)
