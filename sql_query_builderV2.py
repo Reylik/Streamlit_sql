@@ -477,6 +477,46 @@ def build_tree(conditions):
     return tree
 
 
+def build_preview_tree(conditions, pending):
+    """
+    Arbre committé + DEUX nœuds fantômes :
+      • une feuille fantôme greffée sur la dernière feuille  (or_target=leaf)
+      • une branche fantôme au sommet                         (or_target=branch)
+    Les fantômes sont cliquables et valident le placement.
+    """
+    op = pending["join_op"]
+    if not conditions:
+        return None
+
+    # Reconstruire l'arbre committé en gardant la référence de la dernière feuille
+    base = {"type": "leaf", "idx": 0}
+    last_leaf = base
+    for i in range(1, len(conditions)):
+        cop       = conditions[i]["join_op"]
+        placement = conditions[i].get("or_target", "branch")
+        nl        = {"type": "leaf", "idx": i}
+        if placement == "leaf":
+            old = dict(last_leaf)
+            last_leaf.clear()
+            last_leaf.update({"type": "branch", "op": cop, "left": old, "right": nl})
+            last_leaf = nl
+        else:
+            base = {"type": "branch", "op": cop, "left": base, "right": nl}
+            last_leaf = nl
+
+    # Feuille fantôme : greffée en place sur la dernière feuille
+    ghost_leaf = {"type": "ghost", "target": "leaf", "pending": pending}
+    old = dict(last_leaf)
+    last_leaf.clear()
+    last_leaf.update({"type": "branch", "ghost": True, "op": op,
+                      "left": old, "right": ghost_leaf})
+
+    # Branche fantôme : enveloppe tout l'arbre au sommet
+    ghost_branch = {"type": "ghost", "target": "branch", "pending": pending}
+    return {"type": "branch", "ghost": True, "op": op,
+            "left": base, "right": ghost_branch}
+
+
 def _sql_from_tree(node, conditions, params, display):
     if node["type"] == "leaf":
         c = conditions[node["idx"]]
@@ -2968,6 +3008,51 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
     prefix_len      = sum(len(t) for t, _ in prefix_parts) + len(connector)
     ph              = _prefix_html(prefix_parts, connector, connector_color)
 
+    # ── Nœud fantôme : aperçu cliquable de la condition en attente ───────────
+    if node["type"] == "ghost":
+        pending = node["pending"]
+        target  = node["target"]
+        sym     = OPERATORS[pending["operator"]][0]
+        label   = f"{pending['column']} {sym} '{pending.get('value','')}'"
+        oc      = BRANCH_STYLES[pending["join_op"]]["border"]
+        m       = f"ghost-{target}"
+        css = (
+            f'<div id="{m}"></div><style>'
+            f"div.element-container:has(#{m})+div.element-container button{{"
+            f"background:transparent!important;color:#cbd5e1!important;"
+            f"border:1px dashed {oc}!important;border-radius:5px!important;"
+            f"font-family:'JetBrains Mono',monospace!important;font-size:.78rem!important;"
+            f"opacity:.55!important;padding:3px 10px!important;min-height:0!important;"
+            f"text-align:left!important;justify-content:flex-start!important;}}"
+            f"div.element-container:has(#{m})+div.element-container button:hover{{"
+            f"opacity:1!important;background:{oc}1a!important;"
+            f"box-shadow:0 0 10px {oc}66!important;}}"
+            f"div.element-container:has(#{m})+div.element-container button p{{"
+            f"text-align:left!important;}}</style>"
+        )
+        tip = ("Relier à la dernière feuille" if target == "leaf"
+               else "Créer une nouvelle branche au sommet")
+        def _do_click():
+            st.session_state.conditions.append(dict(pending, or_target=target))
+            st.session_state.pop("_pending_cond", None)
+            st.rerun()
+        if ph:
+            w = max(prefix_len * 0.135, 0.35)
+            ca, cb = st.columns([w, max(9 - w, 1)])
+            ca.markdown(f"<div style='padding-top:7px;line-height:1;'>{ph}</div>",
+                        unsafe_allow_html=True)
+            with cb:
+                st.markdown(css, unsafe_allow_html=True)
+                if st.button(f"＋ {label}", key=f"_ghostbtn_{target}",
+                             help=tip, use_container_width=True):
+                    _do_click()
+        else:
+            st.markdown(css, unsafe_allow_html=True)
+            if st.button(f"＋ {label}", key=f"_ghostbtn_{target}",
+                         help=tip, use_container_width=True):
+                _do_click()
+        return
+
     if node["type"] == "leaf":
         idx        = node["idx"]
         is_editing = st.session_state.editing.get(idx) == "leaf"
@@ -3008,16 +3093,29 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
                      is_root=is_root, parent_op=parent_op)
     else:
         op = node["op"]
-        # node["right"] peut être une feuille, un or_group, ou un sous-arbre AND
-        # → prendre l'idx de la première feuille du sous-arbre droit
-        right_idx = _first_leaf_idx(node["right"])
-        if ph:
-            w = max(prefix_len * 0.135, 0.35)
-            ca, cb = st.columns([w, max(9 - w, 1)])
-            ca.markdown(f"<div style='padding-top:8px;line-height:1;'>{ph}</div>", unsafe_allow_html=True)
-            with cb: _branch_button(op, right_idx)
+        if node.get("ghost"):
+            # Branche fantôme : opérateur en label estompé (pas de bouton toggle)
+            oc = BRANCH_STYLES[op]["border"]
+            op_html = (f"<span style='font-family:JetBrains Mono,monospace;"
+                       f"font-size:.78rem;color:{oc};opacity:.55;"
+                       f"border:1px dashed {oc};border-radius:4px;"
+                       f"padding:1px 9px;'>{op}</span>")
+            if ph:
+                st.markdown(f"<div style='padding-top:5px;'>{ph}{op_html}</div>",
+                            unsafe_allow_html=True)
+            else:
+                st.markdown(f"<div style='padding-top:2px;'>{op_html}</div>",
+                            unsafe_allow_html=True)
         else:
-            _branch_button(op, right_idx)
+            # node["right"] peut être feuille, or_group, ou sous-arbre AND
+            right_idx = _first_leaf_idx(node["right"])
+            if ph:
+                w = max(prefix_len * 0.135, 0.35)
+                ca, cb = st.columns([w, max(9 - w, 1)])
+                ca.markdown(f"<div style='padding-top:8px;line-height:1;'>{ph}</div>", unsafe_allow_html=True)
+                with cb: _branch_button(op, right_idx)
+            else:
+                _branch_button(op, right_idx)
         new_pfx = (prefix_parts if is_root else
                    prefix_parts + [("│   ", connector_color)] if not is_last else
                    prefix_parts + [("    ", connector_color)])
@@ -3054,66 +3152,6 @@ def _branch_button(op, right_idx):
         st.rerun()
 
 
-def _render_placement_choice(pending, conditions):
-    """
-    Affiche la condition en attente DEUX fois, en aperçu discret :
-      • reliée à la dernière feuille par un trait droit  (or_target=leaf)
-      • dans une nouvelle branche                        (or_target=branch)
-    Cliquer sur l'un valide le choix.
-    """
-    op    = pending["join_op"]
-    sym   = OPERATORS[pending["operator"]][0]
-    val   = pending.get("value", "")
-    label = f"{pending['column']} {sym} '{val}'"
-    oc    = BRANCH_STYLES[op]["border"]   # couleur de l'opérateur (ET / OU)
-
-    st.markdown(
-        "<div style='margin:10px 0 4px;color:#64748b;font-size:.72rem;"
-        "font-family:JetBrains Mono,monospace;text-transform:uppercase;"
-        "letter-spacing:1px;'>Choisir l'emplacement</div>",
-        unsafe_allow_html=True)
-
-    def _ghost(key, prefix, tip, target):
-        m = f"gh-{key}"
-        st.markdown(
-            f'<div id="{m}"></div><style>'
-            f"div.element-container:has(#{m})+div.element-container button{{"
-            f"background:transparent!important;color:#94a3b8!important;"
-            f"border:1px dashed {oc}!important;border-radius:6px!important;"
-            f"font-family:'JetBrains Mono',monospace!important;font-size:.8rem!important;"
-            f"text-align:left!important;justify-content:flex-start!important;"
-            f"opacity:.65!important;padding:5px 12px!important;min-height:0!important;}}"
-            f"div.element-container:has(#{m})+div.element-container button:hover{{"
-            f"opacity:1!important;background:{oc}1a!important;"
-            f"box-shadow:0 0 8px {oc}55!important;}}"
-            f"div.element-container:has(#{m})+div.element-container button p{{"
-            f"text-align:left!important;}}</style>",
-            unsafe_allow_html=True)
-        if st.button(f"{prefix}  {label}", key=key, use_container_width=True, help=tip):
-            st.session_state.conditions.append(dict(pending, or_target=target))
-            st.session_state.pop("_pending_cond", None)
-            st.rerun()
-
-    # Aperçu 1 — relié à la dernière feuille (trait droit ──)
-    _ghost("_place_leaf",   f"└──{op}──", "Relier à la dernière feuille",      "leaf")
-    # Aperçu 2 — nouvelle branche
-    _ghost("_place_branch", f"  {op} ┐  ", "Créer une nouvelle branche au sommet", "branch")
-
-    # Annuler (très discret)
-    _mc = "gh-cancel"
-    st.markdown(
-        f'<div id="{_mc}"></div><style>'
-        f"div.element-container:has(#{_mc})+div.element-container button{{"
-        f"background:transparent!important;color:#475569!important;border:none!important;"
-        f"font-size:.72rem!important;min-height:0!important;padding:2px!important;}}"
-        f"div.element-container:has(#{_mc})+div.element-container button:hover{{"
-        f"color:#94a3b8!important;}}</style>",
-        unsafe_allow_html=True)
-    if st.button("✕ annuler", key="_place_cancel"):
-        st.session_state.pop("_pending_cond", None)
-        st.rerun()
-
-
 def render_tree(conditions, table):
     st.markdown(
         f"<div class='tree-wrap'>"
@@ -3123,17 +3161,37 @@ def render_tree(conditions, table):
         f"<span style='color:#94a3b8;font-size:.72rem;font-family:JetBrains Mono,monospace;"
         f"text-transform:uppercase;letter-spacing:1px;'>WHERE</span></div>",
         unsafe_allow_html=True)
-    tree = build_tree(conditions)
+    _pending = st.session_state.get("_pending_cond")
+    if _pending and conditions:
+        tree = build_preview_tree(conditions, _pending)
+    else:
+        tree = build_tree(conditions)
     if tree is None:
         st.markdown("<p style='color:#4a5170;font-style:italic;font-size:.85rem;'>Aucune condition.</p>",
                     unsafe_allow_html=True)
         return
     _render_node(tree, conditions, prefix_parts=[], is_last=True, is_root=True, parent_op=None)
 
-    # Mode placement : l'utilisateur choisit où ajouter la condition OU
-    _pending = st.session_state.get("_pending_cond")
+    # En mode placement : rappel + bouton annuler discret
     if _pending:
-        _render_placement_choice(_pending, conditions)
+        sym = OPERATORS[_pending["operator"]][0]
+        st.markdown(
+            "<div style='margin-top:8px;color:#64748b;font-size:.72rem;"
+            "font-family:JetBrains Mono,monospace;'>"
+            "↑ Cliquez un emplacement fantôme (pointillés) pour valider</div>",
+            unsafe_allow_html=True)
+        _mc = "gh-cancel"
+        st.markdown(
+            f'<div id="{_mc}"></div><style>'
+            f"div.element-container:has(#{_mc})+div.element-container button{{"
+            f"background:transparent!important;color:#475569!important;border:none!important;"
+            f"font-size:.72rem!important;min-height:0!important;padding:2px!important;}}"
+            f"div.element-container:has(#{_mc})+div.element-container button:hover{{"
+            f"color:#94a3b8!important;}}</style>",
+            unsafe_allow_html=True)
+        if st.button("✕ annuler", key="_place_cancel"):
+            st.session_state.pop("_pending_cond", None)
+            st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
