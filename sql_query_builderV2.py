@@ -3032,6 +3032,9 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
         )
         tip = ("Relier à la dernière feuille" if target == "leaf"
                else "Créer une nouvelle branche au sommet")
+        # Label d'action en français (au lieu d'afficher la condition)
+        btn_label = ("＋ relier ici" if target == "leaf"
+                     else "＋ nouvelle branche")
         def _do_click():
             st.session_state.conditions.append(dict(pending, or_target=target))
             st.session_state.pop("_pending_cond", None)
@@ -3043,12 +3046,12 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
                         unsafe_allow_html=True)
             with cb:
                 st.markdown(css, unsafe_allow_html=True)
-                if st.button(f"＋ {label}", key=f"_ghostbtn_{target}",
+                if st.button(btn_label, key=f"_ghostbtn_{target}",
                              help=tip, use_container_width=True):
                     _do_click()
         else:
             st.markdown(css, unsafe_allow_html=True)
-            if st.button(f"＋ {label}", key=f"_ghostbtn_{target}",
+            if st.button(btn_label, key=f"_ghostbtn_{target}",
                          help=tip, use_container_width=True):
                 _do_click()
         return
