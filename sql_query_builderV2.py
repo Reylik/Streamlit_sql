@@ -3666,10 +3666,12 @@ def run_app(schema: dict, enrich: dict):
             new_op = st.selectbox("Opérateur", OP_LABELS, key="new_op", label_visibility="collapsed")
     with fc:
         if is_date:
-            d1, d2, d3 = st.columns(3)
-            new_year  = d1.number_input("Année *", 1900, 2100, 2023, 1, key="new_year")
-            new_month = d2.number_input("Mois",    0,    12,   0,    1, key="new_month", help="0 = non précisé")
-            new_day   = d3.number_input("Jour",    0,    31,   0,    1, key="new_day",   help="0 = non précisé")
+            dc, bc = st.columns(2)
+            with dc:
+                new_date = st.date_input("Date", key="new_date")
+            with bc:
+                new_dates = st.text_input("Dates multiples", key="new_bulk_dates",
+                                          placeholder="YYYY-MM-DD, YYYY-MM-DD...")
         else:
             st.text_area("Valeur(s)", key="new_val",
                          placeholder="Une valeur, ou plusieurs séparées par des virgules / sauts de ligne",
@@ -3686,12 +3688,31 @@ def run_app(schema: dict, enrich: dict):
             # Construire le dict de condition (sans join_op/or_target)
             _cond = None
             if is_date:
-                _cond = {
-                    "column": new_col, "label": _new_label,
-                    "operator": "Commence par",
-                    "value": build_date_value(int(new_year), int(new_month), int(new_day)),
-                    "is_date": True, "is_bulk": False,
-                }
+                if new_dates:
+                    # Parser le bulk YYYY-MM-DD
+                    _vals = [d.strip() for d in re.split(r"[,\n]", new_dates) if d.strip()]
+                    _dts = []
+                    for v in _vals:
+                        if re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+                            _dts.append(v)
+                        else:
+                            st.warning(f"Format de date invalide : {v}")
+                    if _dts:
+                        _cond = {
+                            "column": new_col, "label": _new_label,
+                            "operator": "Commence par",
+                            "value": ", ".join(_dts), "values": _dts,
+                            "is_date": True, "is_bulk": True,
+                        }
+                    else:
+                        st.warning("Aucune date valide")
+                else:
+                    _cond = {
+                        "column": new_col, "label": _new_label,
+                        "operator": "Commence par",
+                        "value": new_date.strftime("%Y-%m-%d"),
+                        "is_date": True, "is_bulk": False,
+                    }
             else:
                 raw    = st.session_state.get("new_val", "")
                 values = [v.strip() for v in re.split(r"[,\n]", raw) if v.strip()]
