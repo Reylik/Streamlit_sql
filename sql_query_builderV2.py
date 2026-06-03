@@ -448,51 +448,32 @@ def build_date_value(year: int, month: int, day: int) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 def build_tree(conditions):
     """
-    Construit l'arbre selon join_op et or_target de chaque condition.
+    Arbre binaire. Chaque condition (sauf la 1re) précise :
+      join_op   : "ET" | "OU"
+      or_target : "leaf"   → combine avec la DERNIÈRE feuille  (groupe local)
+                  "branch" → enveloppe TOUT l'arbre            (nouvelle branche)
 
-      join_op == "ET"                     → nouveau terme AND
-      join_op == "OU", or_target="leaf"   → OU sur la dernière feuille (local)
-      join_op == "OU", or_target="branch" → nouvelle branche (OU racine)
-
-    Ex : [A, B(ET), C(OU,leaf), D(OU,branch), E(ET)]
-         → (A AND (B OR C)) OR (D AND E)
+    Ex : [A, B(ET,leaf), C(OU,leaf), D(OU,branch)]
+         → (A AND (B OR C)) OR D
     """
     if not conditions:
         return None
-
-    # Liste de groupes AND ; chaque groupe = liste de termes (leaf | or_group)
-    and_groups: list = [[{"type": "leaf", "idx": 0}]]
-
+    tree = {"type": "leaf", "idx": 0}
+    last_leaf = tree                      # référence vivante vers la dernière feuille
     for i in range(1, len(conditions)):
-        cond      = conditions[i]
-        join_op   = cond["join_op"]
-        or_target = cond.get("or_target", "leaf")
+        op        = conditions[i]["join_op"]
+        placement = conditions[i].get("or_target", "branch")
         new_leaf  = {"type": "leaf", "idx": i}
-
-        if join_op == "OU" and or_target == "branch":
-            # Nouvelle branche : nouveau groupe AND (OU au niveau racine)
-            and_groups.append([new_leaf])
-        elif join_op == "OU":
-            # OU local : étendre le dernier terme du groupe courant
-            grp  = and_groups[-1]
-            last = grp[-1]
-            if last["type"] == "or_group":
-                last["children"].append(new_leaf)
-            else:
-                grp[-1] = {"type": "or_group", "children": [last, new_leaf]}
-        else:  # ET
-            and_groups[-1].append(new_leaf)
-
-    def _build_and(terms):
-        t = terms[0]
-        for term in terms[1:]:
-            t = {"type": "branch", "op": "ET", "left": t, "right": term}
-        return t
-
-    and_trees = [_build_and(g) for g in and_groups]
-    tree = and_trees[0]
-    for at in and_trees[1:]:
-        tree = {"type": "branch", "op": "OU", "left": tree, "right": at}
+        if placement == "leaf":
+            # Remplacer la dernière feuille EN PLACE par (last_leaf op new_leaf)
+            old = dict(last_leaf)
+            last_leaf.clear()
+            last_leaf.update({"type": "branch", "op": op,
+                              "left": old, "right": new_leaf})
+            last_leaf = new_leaf
+        else:                              # branch : envelopper tout l'arbre
+            tree = {"type": "branch", "op": op, "left": tree, "right": new_leaf}
+            last_leaf = new_leaf
     return tree
 
 
@@ -3074,60 +3055,61 @@ def _branch_button(op, right_idx):
 
 
 def _render_placement_choice(pending, conditions):
-    """Affiche les 2 cibles de placement (dernière feuille / nouvelle branche)."""
-    sym = OPERATORS[pending["operator"]][0]
-    val = pending.get("value", "")
+    """
+    Affiche la condition en attente DEUX fois, en aperçu discret :
+      • reliée à la dernière feuille par un trait droit  (or_target=leaf)
+      • dans une nouvelle branche                        (or_target=branch)
+    Cliquer sur l'un valide le choix.
+    """
+    op    = pending["join_op"]
+    sym   = OPERATORS[pending["operator"]][0]
+    val   = pending.get("value", "")
     label = f"{pending['column']} {sym} '{val}'"
+    oc    = BRANCH_STYLES[op]["border"]   # couleur de l'opérateur (ET / OU)
 
     st.markdown(
-        "<div style='margin-top:14px;padding:8px 12px;border-radius:8px;"
-        "background:#1a1410;border:0.5px solid #b45309;"
-        "color:#fbbf24;font-size:.8rem;font-family:JetBrains Mono,monospace;'>"
-        f"▼ Où placer&nbsp; <b>{label}</b>&nbsp;?</div>",
+        "<div style='margin:10px 0 4px;color:#64748b;font-size:.72rem;"
+        "font-family:JetBrains Mono,monospace;text-transform:uppercase;"
+        "letter-spacing:1px;'>Choisir l'emplacement</div>",
         unsafe_allow_html=True)
 
-    # ── Cible 1 : sur la dernière feuille (OU local) ─────────────────────────
-    st.markdown(
-        "<div style='color:#22c55e;font-size:.74rem;font-family:JetBrains Mono,monospace;"
-        "margin:8px 0 2px;'>└── OU sur la <b>dernière feuille</b> "
-        "<span style='color:#64748b;'>→ A AND (B OR nouvelle)</span></div>",
-        unsafe_allow_html=True)
-    _m1 = "place-leaf"
-    st.markdown(
-        f'<div id="{_m1}"></div><style>'
-        f"div.element-container:has(#{_m1})+div.element-container button{{"
-        f"background:#052e16!important;color:#86efac!important;"
-        f"border:1px solid #22c55e!important;border-radius:6px!important;"
-        f"font-family:JetBrains Mono,monospace!important;}}</style>",
-        unsafe_allow_html=True)
-    if st.button(f"＋ OU ici : {label}", key="_place_leaf", use_container_width=True):
-        st.session_state.conditions.append(
-            dict(pending, join_op="OU", or_target="leaf"))
-        st.session_state.pop("_pending_cond", None)
-        st.rerun()
+    def _ghost(key, prefix, tip, target):
+        m = f"gh-{key}"
+        st.markdown(
+            f'<div id="{m}"></div><style>'
+            f"div.element-container:has(#{m})+div.element-container button{{"
+            f"background:transparent!important;color:#94a3b8!important;"
+            f"border:1px dashed {oc}!important;border-radius:6px!important;"
+            f"font-family:'JetBrains Mono',monospace!important;font-size:.8rem!important;"
+            f"text-align:left!important;justify-content:flex-start!important;"
+            f"opacity:.65!important;padding:5px 12px!important;min-height:0!important;}}"
+            f"div.element-container:has(#{m})+div.element-container button:hover{{"
+            f"opacity:1!important;background:{oc}1a!important;"
+            f"box-shadow:0 0 8px {oc}55!important;}}"
+            f"div.element-container:has(#{m})+div.element-container button p{{"
+            f"text-align:left!important;}}</style>",
+            unsafe_allow_html=True)
+        if st.button(f"{prefix}  {label}", key=key, use_container_width=True, help=tip):
+            st.session_state.conditions.append(dict(pending, or_target=target))
+            st.session_state.pop("_pending_cond", None)
+            st.rerun()
 
-    # ── Cible 2 : nouvelle branche (OU racine) ───────────────────────────────
-    st.markdown(
-        "<div style='color:#a78bfa;font-size:.74rem;font-family:JetBrains Mono,monospace;"
-        "margin:10px 0 2px;'>OU ┐ <b>nouvelle branche</b> "
-        "<span style='color:#64748b;'>→ (A AND B) OR nouvelle</span></div>",
-        unsafe_allow_html=True)
-    _m2 = "place-branch"
-    st.markdown(
-        f'<div id="{_m2}"></div><style>'
-        f"div.element-container:has(#{_m2})+div.element-container button{{"
-        f"background:#2e1065!important;color:#c4b5fd!important;"
-        f"border:1px solid #a78bfa!important;border-radius:6px!important;"
-        f"font-family:JetBrains Mono,monospace!important;}}</style>",
-        unsafe_allow_html=True)
-    if st.button(f"＋ OU nouvelle branche : {label}", key="_place_branch",
-                 use_container_width=True):
-        st.session_state.conditions.append(
-            dict(pending, join_op="OU", or_target="branch"))
-        st.session_state.pop("_pending_cond", None)
-        st.rerun()
+    # Aperçu 1 — relié à la dernière feuille (trait droit ──)
+    _ghost("_place_leaf",   f"└──{op}──", "Relier à la dernière feuille",      "leaf")
+    # Aperçu 2 — nouvelle branche
+    _ghost("_place_branch", f"  {op} ┐  ", "Créer une nouvelle branche au sommet", "branch")
 
-    if st.button("✕ Annuler", key="_place_cancel"):
+    # Annuler (très discret)
+    _mc = "gh-cancel"
+    st.markdown(
+        f'<div id="{_mc}"></div><style>'
+        f"div.element-container:has(#{_mc})+div.element-container button{{"
+        f"background:transparent!important;color:#475569!important;border:none!important;"
+        f"font-size:.72rem!important;min-height:0!important;padding:2px!important;}}"
+        f"div.element-container:has(#{_mc})+div.element-container button:hover{{"
+        f"color:#94a3b8!important;}}</style>",
+        unsafe_allow_html=True)
+    if st.button("✕ annuler", key="_place_cancel"):
         st.session_state.pop("_pending_cond", None)
         st.rerun()
 
@@ -3656,14 +3638,15 @@ def run_app(schema: dict, enrich: dict):
                     }
 
             if _cond is not None:
-                if not st.session_state.conditions or new_join == "ET":
-                    # Premier critère ou ET → ajout direct
-                    _cond["join_op"]   = "ET" if not st.session_state.conditions else new_join
+                if not st.session_state.conditions:
+                    # Première condition → ajout direct (pas de choix)
+                    _cond["join_op"]   = "ET"
                     _cond["or_target"] = "leaf"
                     st.session_state.conditions.append(_cond)
                     st.rerun()
                 else:
-                    # OU → mode placement : l'utilisateur choisit sur l'arbre
+                    # ET comme OU → mode placement (choix sur l'arbre)
+                    _cond["join_op"] = new_join
                     st.session_state._pending_cond = _cond
                     st.rerun()
     with btn_b:
