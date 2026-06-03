@@ -3032,9 +3032,20 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
         )
         tip = ("Relier à la dernière feuille" if target == "leaf"
                else "Créer une nouvelle branche au sommet")
-        # Label d'action en français (au lieu d'afficher la condition)
-        btn_label = ("＋ relier ici" if target == "leaf"
-                     else "＋ nouvelle branche")
+        # Label lisible : "ID Passeport contient « test »" (comme une feuille committée)
+        _coldisp = pending.get("label", pending["column"])
+        if pending.get("is_date"):
+            cond_txt = f"{_coldisp} en {_date_label(pending['value'])}"
+        elif pending.get("is_bulk"):
+            _ops = OP_NATURAL.get(pending["operator"], pending["operator"])
+            _vals = pending.get("values", [])
+            _prev = " · ".join(f"«{v}»" for v in _vals[:3])
+            _suf  = f" +{len(_vals)-3}" if len(_vals) > 3 else ""
+            cond_txt = f"{_coldisp} {_ops} [{_prev}{_suf}]"
+        else:
+            _ops = OP_NATURAL.get(pending["operator"], pending["operator"])
+            cond_txt = f"{_coldisp} {_ops} « {pending.get('value','')} »"
+        btn_label = f"＋ {cond_txt}"
         def _do_click():
             st.session_state.conditions.append(dict(pending, or_target=target))
             st.session_state.pop("_pending_cond", None)
