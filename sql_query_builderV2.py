@@ -448,29 +448,51 @@ def build_date_value(year: int, month: int, day: int) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 def build_tree(conditions):
     """
-    OU local : s'applique à la dernière feuille/groupe, pas à l'arbre entier.
+    Construit l'arbre selon join_op et or_target de chaque condition.
 
-    [A, B(ET), C(OU), D(ET)]  →  A AND (B OR C) AND D
-    [A, B(OU), C(OU)]         →  (A OR B OR C)
+      join_op == "ET"                     → nouveau terme AND
+      join_op == "OU", or_target="leaf"   → OU sur la dernière feuille (local)
+      join_op == "OU", or_target="branch" → nouvelle branche (OU racine)
+
+    Ex : [A, B(ET), C(OU,leaf), D(OU,branch), E(ET)]
+         → (A AND (B OR C)) OR (D AND E)
     """
     if not conditions:
         return None
-    and_items: list = [{"type": "leaf", "idx": 0}]
+
+    # Liste de groupes AND ; chaque groupe = liste de termes (leaf | or_group)
+    and_groups: list = [[{"type": "leaf", "idx": 0}]]
+
     for i in range(1, len(conditions)):
-        join_op  = conditions[i]["join_op"]
-        new_leaf = {"type": "leaf", "idx": i}
-        if join_op == "OU":
-            last = and_items[-1]
+        cond      = conditions[i]
+        join_op   = cond["join_op"]
+        or_target = cond.get("or_target", "leaf")
+        new_leaf  = {"type": "leaf", "idx": i}
+
+        if join_op == "OU" and or_target == "branch":
+            # Nouvelle branche : nouveau groupe AND (OU au niveau racine)
+            and_groups.append([new_leaf])
+        elif join_op == "OU":
+            # OU local : étendre le dernier terme du groupe courant
+            grp  = and_groups[-1]
+            last = grp[-1]
             if last["type"] == "or_group":
                 last["children"].append(new_leaf)
             else:
-                and_items[-1] = {"type": "or_group",
-                                  "children": [last, new_leaf]}
-        else:
-            and_items.append(new_leaf)
-    tree = and_items[0]
-    for item in and_items[1:]:
-        tree = {"type": "branch", "op": "ET", "left": tree, "right": item}
+                grp[-1] = {"type": "or_group", "children": [last, new_leaf]}
+        else:  # ET
+            and_groups[-1].append(new_leaf)
+
+    def _build_and(terms):
+        t = terms[0]
+        for term in terms[1:]:
+            t = {"type": "branch", "op": "ET", "left": t, "right": term}
+        return t
+
+    and_trees = [_build_and(g) for g in and_groups]
+    tree = and_trees[0]
+    for at in and_trees[1:]:
+        tree = {"type": "branch", "op": "OU", "left": tree, "right": at}
     return tree
 
 
@@ -3005,11 +3027,9 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
                      is_root=is_root, parent_op=parent_op)
     else:
         op = node["op"]
-        # node["right"] peut être un or_group (sans idx) → prendre le 1er enfant
-        _rn = node["right"]
-        right_idx = (_rn["children"][0]["idx"]
-                     if _rn.get("type") == "or_group"
-                     else _rn["idx"])
+        # node["right"] peut être une feuille, un or_group, ou un sous-arbre AND
+        # → prendre l'idx de la première feuille du sous-arbre droit
+        right_idx = _first_leaf_idx(node["right"])
         if ph:
             w = max(prefix_len * 0.135, 0.35)
             ca, cb = st.columns([w, max(9 - w, 1)])
@@ -3022,6 +3042,16 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
                    prefix_parts + [("    ", connector_color)])
         _render_node(node["left"],  conditions, new_pfx, is_last=False, parent_op=op)
         _render_node(node["right"], conditions, new_pfx, is_last=True,  parent_op=op)
+
+
+def _first_leaf_idx(node):
+    """Retourne l'idx de la première feuille d'un sous-arbre (quel que soit son type)."""
+    if node["type"] == "leaf":
+        return node["idx"]
+    if node["type"] == "or_group":
+        return node["children"][0]["idx"]
+    # branch
+    return _first_leaf_idx(node["left"])
 
 
 def _branch_button(op, right_idx):
@@ -3043,6 +3073,65 @@ def _branch_button(op, right_idx):
         st.rerun()
 
 
+def _render_placement_choice(pending, conditions):
+    """Affiche les 2 cibles de placement (dernière feuille / nouvelle branche)."""
+    sym = OPERATORS[pending["operator"]][0]
+    val = pending.get("value", "")
+    label = f"{pending['column']} {sym} '{val}'"
+
+    st.markdown(
+        "<div style='margin-top:14px;padding:8px 12px;border-radius:8px;"
+        "background:#1a1410;border:0.5px solid #b45309;"
+        "color:#fbbf24;font-size:.8rem;font-family:JetBrains Mono,monospace;'>"
+        f"▼ Où placer&nbsp; <b>{label}</b>&nbsp;?</div>",
+        unsafe_allow_html=True)
+
+    # ── Cible 1 : sur la dernière feuille (OU local) ─────────────────────────
+    st.markdown(
+        "<div style='color:#22c55e;font-size:.74rem;font-family:JetBrains Mono,monospace;"
+        "margin:8px 0 2px;'>└── OU sur la <b>dernière feuille</b> "
+        "<span style='color:#64748b;'>→ A AND (B OR nouvelle)</span></div>",
+        unsafe_allow_html=True)
+    _m1 = "place-leaf"
+    st.markdown(
+        f'<div id="{_m1}"></div><style>'
+        f"div.element-container:has(#{_m1})+div.element-container button{{"
+        f"background:#052e16!important;color:#86efac!important;"
+        f"border:1px solid #22c55e!important;border-radius:6px!important;"
+        f"font-family:JetBrains Mono,monospace!important;}}</style>",
+        unsafe_allow_html=True)
+    if st.button(f"＋ OU ici : {label}", key="_place_leaf", use_container_width=True):
+        st.session_state.conditions.append(
+            dict(pending, join_op="OU", or_target="leaf"))
+        st.session_state.pop("_pending_cond", None)
+        st.rerun()
+
+    # ── Cible 2 : nouvelle branche (OU racine) ───────────────────────────────
+    st.markdown(
+        "<div style='color:#a78bfa;font-size:.74rem;font-family:JetBrains Mono,monospace;"
+        "margin:10px 0 2px;'>OU ┐ <b>nouvelle branche</b> "
+        "<span style='color:#64748b;'>→ (A AND B) OR nouvelle</span></div>",
+        unsafe_allow_html=True)
+    _m2 = "place-branch"
+    st.markdown(
+        f'<div id="{_m2}"></div><style>'
+        f"div.element-container:has(#{_m2})+div.element-container button{{"
+        f"background:#2e1065!important;color:#c4b5fd!important;"
+        f"border:1px solid #a78bfa!important;border-radius:6px!important;"
+        f"font-family:JetBrains Mono,monospace!important;}}</style>",
+        unsafe_allow_html=True)
+    if st.button(f"＋ OU nouvelle branche : {label}", key="_place_branch",
+                 use_container_width=True):
+        st.session_state.conditions.append(
+            dict(pending, join_op="OU", or_target="branch"))
+        st.session_state.pop("_pending_cond", None)
+        st.rerun()
+
+    if st.button("✕ Annuler", key="_place_cancel"):
+        st.session_state.pop("_pending_cond", None)
+        st.rerun()
+
+
 def render_tree(conditions, table):
     st.markdown(
         f"<div class='tree-wrap'>"
@@ -3058,6 +3147,11 @@ def render_tree(conditions, table):
                     unsafe_allow_html=True)
         return
     _render_node(tree, conditions, prefix_parts=[], is_last=True, is_root=True, parent_op=None)
+
+    # Mode placement : l'utilisateur choisit où ajouter la condition OU
+    _pending = st.session_state.get("_pending_cond")
+    if _pending:
+        _render_placement_choice(_pending, conditions)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3535,40 +3629,49 @@ def run_app(schema: dict, enrich: dict):
     with btn_a:
         if st.button("➕ Ajouter la condition", width="stretch"):
             _new_label = col_labels_map.get(new_col, new_col)
+            # Construire le dict de condition (sans join_op/or_target)
+            _cond = None
             if is_date:
-                st.session_state.conditions.append({
+                _cond = {
                     "column": new_col, "label": _new_label,
                     "operator": "Commence par",
-                    "value":  build_date_value(int(new_year), int(new_month), int(new_day)),
-                    "join_op": new_join, "is_date": True,
-                })
-                st.rerun()
+                    "value": build_date_value(int(new_year), int(new_month), int(new_day)),
+                    "is_date": True, "is_bulk": False,
+                }
             else:
                 raw    = st.session_state.get("new_val", "")
                 values = [v.strip() for v in re.split(r"[,\n]", raw) if v.strip()]
                 if not values:
                     st.warning("Veuillez entrer au moins une valeur.")
                 elif len(values) == 1:
-                    st.session_state.conditions.append({
-                        "column": new_col, "label": _new_label,
-                        "operator": new_op,
-                        "value": values[0], "join_op": new_join,
-                        "is_date": False, "is_bulk": False,
-                    })
+                    _cond = {
+                        "column": new_col, "label": _new_label, "operator": new_op,
+                        "value": values[0], "is_date": False, "is_bulk": False,
+                    }
+                else:
+                    _cond = {
+                        "column": new_col, "label": _new_label, "operator": new_op,
+                        "value": ", ".join(values), "values": values,
+                        "is_date": False, "is_bulk": True,
+                    }
+
+            if _cond is not None:
+                if not st.session_state.conditions or new_join == "ET":
+                    # Premier critère ou ET → ajout direct
+                    _cond["join_op"]   = "ET" if not st.session_state.conditions else new_join
+                    _cond["or_target"] = "leaf"
+                    st.session_state.conditions.append(_cond)
                     st.rerun()
                 else:
-                    st.session_state.conditions.append({
-                        "column": new_col, "label": _new_label,
-                        "operator": new_op,
-                        "value": ", ".join(values), "values": values,
-                        "join_op": new_join, "is_date": False, "is_bulk": True,
-                    })
+                    # OU → mode placement : l'utilisateur choisit sur l'arbre
+                    st.session_state._pending_cond = _cond
                     st.rerun()
     with btn_b:
         if st.button("🗑 Effacer", width="stretch"):
             st.session_state.conditions   = []
             st.session_state.results      = None
             st.session_state.enrich_count = None
+            st.session_state.pop("_pending_cond", None)
             st.rerun()
 
     st.markdown("---")
