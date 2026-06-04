@@ -2971,7 +2971,8 @@ def _render_leaf_editor(conditions, idx):
     elif is_date:
         em, e1, e2, e3, e4, e5 = st.columns([1.8, 1.5, 1, 1, 0.5, 0.5])
         with em:
-            date_mode = st.radio("Mode", ["Date unique", "Plage de dates"], key=f"date_mode_{idx}")
+            st.markdown("#")
+            date_mode = st.selectbox("Mode", ["Date unique", "Plage de dates"], key=f"date_mode_{idx}")
         is_range  = date_mode == "Plage de dates"
         
         parts = cond["value"][0].split("-") if isinstance(cond["value"], tuple) else cond["value"].split("-")
