@@ -2969,36 +2969,37 @@ def _render_leaf_editor(conditions, idx):
                 st.rerun()
 
     elif is_date:
-        parts     = cond["value"].split("-")
+        date_mode = st.radio("Mode", ["Date unique", "Plage de dates"], key=f"date_mode_{idx}")
+        is_range  = date_mode == "Plage de dates"
+        
+        parts = cond["value"][0].split("-") if isinstance(cond["value"], tuple) else cond["value"].split("-")
         cur_year  = int(parts[0]) if len(parts) >= 1 else 2023
         cur_month = int(parts[1]) if len(parts) >= 2 else 0
         cur_day   = int(parts[2]) if len(parts) >= 3 else 0
         e1, e2, e3, e4, e5 = st.columns([1.5, 1, 1, 0.5, 0.5])
-        e1.number_input("Année", 1900, 2100, cur_year,  key=f"ey_{idx}", label_visibility="collapsed")
-        e2.number_input("Mois",  0, 12, cur_month,      key=f"em_{idx}", label_visibility="collapsed")
-        e3.number_input("Jour",  0, 31, cur_day,        key=f"ed_{idx}", label_visibility="collapsed")
-
-        if isinstance(cur_month, tuple):  # Plage de dates  
-            st.date_input("Date de début", value=datetime(cur_year[0], cur_month[0], cur_day[0]),
-                          key=f"estart_{idx}")
-            st.date_input("Date de fin", value=datetime(cur_year[1], cur_month[1], cur_day[1]), 
-                          key=f"eend_{idx}")
+        
+        if is_range:
+            e1.date_input("Début", value=datetime(cur_year, cur_month, cur_day), key=f"start_{idx}")  
+            e2.date_input("Fin", value=datetime(cur_year, cur_month, cur_day), key=f"end_{idx}")
+        else:
+            e1.number_input("Année", 1900, 2100, cur_year,  key=f"ey_{idx}", label_visibility="collapsed")
+            e2.number_input("Mois",  0, 12, cur_month,      key=f"em_{idx}", label_visibility="collapsed")   
+            e3.number_input("Jour",  0, 31, cur_day,        key=f"ed_{idx}", label_visibility="collapsed")
+        
+        with e4:
             if st.button("✓", key=f"eok_{idx}", help="Valider"):
-                start_date = st.session_state.get(f"estart_{idx}") 
-                end_date   = st.session_state.get(f"eend_{idx}")
-                st.session_state.conditions[idx]["value"] = (start_date, end_date)
-                st.session_state.editing.pop(idx, None)
-                st.rerun()
-        else:  # Date unique
-            with e4:
-                if st.button("✓", key=f"eok_{idx}", help="Valider"):
+                if is_range:
+                    start = st.session_state.get(f"start_{idx}")
+                    end   = st.session_state.get(f"end_{idx}")
+                    st.session_state.conditions[idx]["value"] = (start, end)
+                else:
                     st.session_state.conditions[idx]["value"] = build_date_value(
                         int(st.session_state.get(f"ey_{idx}", cur_year)),
                         int(st.session_state.get(f"em_{idx}", cur_month)),
                         int(st.session_state.get(f"ed_{idx}", cur_day)),
                     )
-                    st.session_state.editing.pop(idx, None)
-                    st.rerun()
+                st.session_state.editing.pop(idx, None)
+                st.rerun()
         with e5:
             if st.button("🗑", key=f"edel_{idx}", help="Supprimer"):
                 st.session_state.conditions.pop(idx)
