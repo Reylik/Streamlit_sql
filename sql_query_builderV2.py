@@ -2991,14 +2991,14 @@ def _render_leaf_editor(conditions, idx):
                 st.rerun()
         else:  # Date unique
             with e4:
-            if st.button("✓", key=f"eok_{idx}", help="Valider"):
-                st.session_state.conditions[idx]["value"] = build_date_value(
-                    int(st.session_state.get(f"ey_{idx}", cur_year)),
-                    int(st.session_state.get(f"em_{idx}", cur_month)),
-                    int(st.session_state.get(f"ed_{idx}", cur_day)),
-                )
-                st.session_state.editing.pop(idx, None)
-                st.rerun()
+                if st.button("✓", key=f"eok_{idx}", help="Valider"):
+                    st.session_state.conditions[idx]["value"] = build_date_value(
+                        int(st.session_state.get(f"ey_{idx}", cur_year)),
+                        int(st.session_state.get(f"em_{idx}", cur_month)),
+                        int(st.session_state.get(f"ed_{idx}", cur_day)),
+                    )
+                    st.session_state.editing.pop(idx, None)
+                    st.rerun()
         with e5:
             if st.button("🗑", key=f"edel_{idx}", help="Supprimer"):
                 st.session_state.conditions.pop(idx)
