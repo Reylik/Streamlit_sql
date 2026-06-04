@@ -530,6 +530,14 @@ def _sql_from_tree(node, conditions, params, display):
                     clauses.append(f"{c['column']} {sym} ?")
                     params.append(fn(v))
             return "(" + " OR ".join(clauses) + ")"
+        elif isinstance(c["value"], tuple):  # Plage de dates
+            date1, date2 = c["value"]
+            if display:
+                return f"{c['column']} BETWEEN '{date1}' AND '{date2}'" 
+            else:
+                params.extend([date1, date2])
+                return f"{c['column']} BETWEEN ? AND ?"
+        
         sym, fn = OPERATORS[c["operator"]]
         val = fn(c["value"])
         if display: return f"{c['column']} {sym} '{val}'"
@@ -2872,9 +2880,15 @@ def _leaf_html(conditions, idx):
     c           = conditions[idx]
     col_display = c.get("label", c["column"])   # label si dispo, sinon nom brut
     if c.get("is_date"):
-        return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{col_display}</b> "
-                f"<span style='color:#fbbf24;'>en</span> "
-                f"<span style='color:#86efac;'>{_date_label(c['value'])}</span></span>")
+        if isinstance(c["value"], tuple):
+            date1, date2 = c["value"]
+            return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{col_display}</b> " 
+                    f"<span style='color:#fbbf24;'>entre</span> "
+                    f"<span style='color:#86efac;'>le {date1} et le {date2}</span></span>")
+        else:
+            return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{col_display}</b> "
+                    f"<span style='color:#fbbf24;'>en</span> " 
+                    f"<span style='color:#86efac;'>{_date_label(c['value'])}</span></span>")
     if c.get("is_bulk"):
         values  = c["values"]
         n       = len(values)
@@ -2963,7 +2977,20 @@ def _render_leaf_editor(conditions, idx):
         e1.number_input("Année", 1900, 2100, cur_year,  key=f"ey_{idx}", label_visibility="collapsed")
         e2.number_input("Mois",  0, 12, cur_month,      key=f"em_{idx}", label_visibility="collapsed")
         e3.number_input("Jour",  0, 31, cur_day,        key=f"ed_{idx}", label_visibility="collapsed")
-        with e4:
+
+        if isinstance(cur_month, tuple):  # Plage de dates  
+            st.date_input("Date de début", value=datetime(cur_year[0], cur_month[0], cur_day[0]),
+                          key=f"estart_{idx}")
+            st.date_input("Date de fin", value=datetime(cur_year[1], cur_month[1], cur_day[1]), 
+                          key=f"eend_{idx}")
+            if st.button("✓", key=f"eok_{idx}", help="Valider"):
+                start_date = st.session_state.get(f"estart_{idx}") 
+                end_date   = st.session_state.get(f"eend_{idx}")
+                st.session_state.conditions[idx]["value"] = (start_date, end_date)
+                st.session_state.editing.pop(idx, None)
+                st.rerun()
+        else:  # Date unique
+            with e4:
             if st.button("✓", key=f"eok_{idx}", help="Valider"):
                 st.session_state.conditions[idx]["value"] = build_date_value(
                     int(st.session_state.get(f"ey_{idx}", cur_year)),
