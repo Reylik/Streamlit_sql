@@ -249,6 +249,58 @@ class DBAdapter:
         return cur
 
 
+@st.cache_data(ttl=300)
+def get_table_summary(table_name: str, date_cols: tuple) -> dict:
+    """
+    Retourne un résumé de la table : nombre de lignes + dates min/max
+    pour chaque colonne de type date. Tout est calculé en SQL.
+
+    Paramètres
+    ----------
+    table_name : str
+        Nom de la table SQL.
+    date_cols : tuple
+        Tuple des noms de colonnes de type date (tuple pour être hashable et cacheable).
+
+    Retour
+    ------
+    dict avec :
+      - "row_count" : int, nombre total de lignes
+      - "date_info" : dict { col: {"min": str, "max": str} }
+    """
+    db = _get_db()
+    summary = {"row_count": 0, "date_info": {}}
+
+    # Nombre de lignes
+    try:
+        df_count = db.read_sql(f"SELECT COUNT(*) AS n FROM {table_name}")
+        summary["row_count"] = int(df_count["n"].iloc[0])
+    except Exception:
+        return summary
+
+    # Dates min/max pour chaque colonne date
+    if date_cols:
+        select_parts = []
+        for col in date_cols:
+            select_parts.append(f"MIN({col}) AS {col}__min")
+            select_parts.append(f"MAX({col}) AS {col}__max")
+        sql = f"SELECT {', '.join(select_parts)} FROM {table_name}"
+        try:
+            df_dates = db.read_sql(sql)
+            row = df_dates.iloc[0]
+            for col in date_cols:
+                vmin = row[f"{col}__min"]
+                vmax = row[f"{col}__max"]
+                summary["date_info"][col] = {
+                    "min": str(vmin) if pd.notna(vmin) else None,
+                    "max": str(vmax) if pd.notna(vmax) else None,
+                }
+        except Exception:
+            pass
+
+    return summary
+
+
 def _get_db() -> DBAdapter:
     """Retourne l'adaptateur SQLite de démonstration (toujours actif)."""
     return DBAdapter("sqlite", get_connection(), "Démo SQLite")
@@ -530,7 +582,7 @@ def _sql_from_tree(node, conditions, params, display):
                     clauses.append(f"{c['column']} {sym} ?")
                     params.append(fn(v))
             return "(" + " OR ".join(clauses) + ")"
-        elif isinstance(c["value"], tuple):  # Plage de dates
+        elif isinstance(c["value"], (tuple, list)) and len(c["value"]) == 2:  # Plage de dates
             date1, date2 = c["value"]
             if display:
                 return f"{c['column']} BETWEEN '{date1}' AND '{date2}'" 
@@ -2880,11 +2932,13 @@ def _leaf_html(conditions, idx):
     c           = conditions[idx]
     col_display = c.get("label", c["column"])   # label si dispo, sinon nom brut
     if c.get("is_date"):
-        if isinstance(c["value"], tuple):
+        if isinstance(c["value"], (tuple, list)) and len(c["value"]) == 2:
             date1, date2 = c["value"]
             return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{col_display}</b> " 
-                    f"<span style='color:#fbbf24;'>entre</span> "
-                    f"<span style='color:#86efac;'>le {date1} et le {date2}</span></span>")
+                    f"<span style='color:#fbbf24;'>entre le</span> "
+                    f"<span style='color:#86efac;'>{_format_date_fr(date1)}</span> "
+                    f"<span style='color:#fbbf24;'>et le</span> "
+                    f"<span style='color:#86efac;'>{_format_date_fr(date2)}</span></span>")
         else:
             return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{col_display}</b> "
                     f"<span style='color:#fbbf24;'>en</span> " 
@@ -2969,41 +3023,96 @@ def _render_leaf_editor(conditions, idx):
                 st.rerun()
 
     elif is_date:
-        em, e1, e2, e3, e4, e5 = st.columns([1.8, 1.5, 1, 1, 0.5, 0.5])
-        with em:
-            st.markdown("#")
-            date_mode = st.selectbox("Mode", ["Date unique", "Plage de dates"], key=f"date_mode_{idx}")
-        is_range  = date_mode == "Plage de dates"
-        
-        parts = cond["value"][0].split("-") if isinstance(cond["value"], tuple) else cond["value"].split("-")
-        cur_year  = int(parts[0]) if len(parts) >= 1 else 2023
-        cur_month = int(parts[1]) if len(parts) >= 2 else 0
-        cur_day   = int(parts[2]) if len(parts) >= 3 else 0
-        e1, e2, e3, e4, e5 = st.columns([1.5, 1, 1, 0.5, 0.5])
-        
-        if is_range:
-            e1.date_input("Début", value=datetime(cur_year, cur_month, cur_day), key=f"start_{idx}")  
-            e2.date_input("Fin", value=datetime(cur_year, cur_month, cur_day), key=f"end_{idx}")
+        # Détection du mode initial : tuple/list de 2 = plage de dates, sinon date unique
+        _val_is_range = (
+            isinstance(cond["value"], (tuple, list)) and len(cond["value"]) == 2
+        )
+
+        # Extraction de la date de référence (string YYYY-MM-DD)
+        def _date_str(v):
+            """Convertit une valeur en string YYYY-MM-DD si possible."""
+            if v is None:
+                return "2023-01-01"
+            if hasattr(v, "strftime"):
+                return v.strftime("%Y-%m-%d")
+            return str(v)
+
+        if _val_is_range:
+            _ref_start = _date_str(cond["value"][0])
+            _ref_end   = _date_str(cond["value"][1])
         else:
-            e1.number_input("Année", 1900, 2100, cur_year,  key=f"ey_{idx}", label_visibility="collapsed")
-            e2.number_input("Mois",  0, 12, cur_month,      key=f"em_{idx}", label_visibility="collapsed")   
-            e3.number_input("Jour",  0, 31, cur_day,        key=f"ed_{idx}", label_visibility="collapsed")
-        
-        with e4:
+            _ref_start = _date_str(cond["value"])
+            _ref_end   = _ref_start
+
+        em, ec1, ec2, ec3, ec4, ec5 = st.columns([1.6, 1.4, 1.0, 1.0, 0.45, 0.45])
+
+        with em:
+            _initial_idx = 1 if _val_is_range else 0
+            date_mode = st.selectbox(
+                "Mode", ["📅 Date unique", "📆 Plage de dates"],
+                index=_initial_idx,
+                key=f"date_mode_{idx}",
+                label_visibility="collapsed",
+            )
+        is_range = date_mode == "📆 Plage de dates"
+
+        # ── Mode plage de dates ─────────────────────────────────────────────
+        if is_range:
+            try:
+                _ds = datetime.strptime(_ref_start, "%Y-%m-%d").date()
+            except Exception:
+                _ds = datetime(2023, 1, 1).date()
+            try:
+                _de = datetime.strptime(_ref_end, "%Y-%m-%d").date()
+            except Exception:
+                _de = _ds
+
+            with ec1:
+                st.date_input("Début", value=_ds, key=f"estart_{idx}",
+                              label_visibility="collapsed")
+            with ec2:
+                st.date_input("Fin", value=_de, key=f"eend_{idx}",
+                              label_visibility="collapsed")
+            # ec3 vide pour conserver l'alignement
+        # ── Mode date unique ────────────────────────────────────────────────
+        else:
+            parts = _ref_start.split("-")
+            cur_year  = int(parts[0]) if len(parts) >= 1 and parts[0].isdigit() else 2023
+            cur_month = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else 0
+            cur_day   = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 0
+            ec1.number_input("Année", 1900, 2100, cur_year, key=f"ey_{idx}",
+                             label_visibility="collapsed")
+            ec2.number_input("Mois", 0, 12, cur_month, key=f"em_{idx}",
+                             label_visibility="collapsed")
+            ec3.number_input("Jour", 0, 31, cur_day, key=f"ed_{idx}",
+                             label_visibility="collapsed")
+
+        with ec4:
             if st.button("✓", key=f"eok_{idx}", help="Valider"):
                 if is_range:
-                    start = st.session_state.get(f"start_{idx}")
-                    end   = st.session_state.get(f"end_{idx}")
-                    st.session_state.conditions[idx]["value"] = (start, end)
+                    _s = st.session_state.get(f"estart_{idx}")
+                    _e = st.session_state.get(f"eend_{idx}")
+                    if _s and _e and _s > _e:
+                        st.warning("Date de début > date de fin.")
+                    else:
+                        st.session_state.conditions[idx]["value"] = (
+                            _s.strftime("%Y-%m-%d") if _s else "",
+                            _e.strftime("%Y-%m-%d") if _e else "",
+                        )
+                        st.session_state.conditions[idx]["is_range"] = True
+                        st.session_state.conditions[idx].pop("values", None)
+                        st.session_state.editing.pop(idx, None)
+                        st.rerun()
                 else:
                     st.session_state.conditions[idx]["value"] = build_date_value(
-                        int(st.session_state.get(f"ey_{idx}", cur_year)),
-                        int(st.session_state.get(f"em_{idx}", cur_month)),
-                        int(st.session_state.get(f"ed_{idx}", cur_day)),
+                        int(st.session_state.get(f"ey_{idx}", 2023)),
+                        int(st.session_state.get(f"em_{idx}", 0)),
+                        int(st.session_state.get(f"ed_{idx}", 0)),
                     )
-                st.session_state.editing.pop(idx, None)
-                st.rerun()
-        with e5:
+                    st.session_state.conditions[idx]["is_range"] = False
+                    st.session_state.editing.pop(idx, None)
+                    st.rerun()
+        with ec5:
             if st.button("🗑", key=f"edel_{idx}", help="Supprimer"):
                 st.session_state.conditions.pop(idx)
                 st.session_state.editing.pop(idx, None)
@@ -3487,6 +3596,90 @@ def _render_history_popover(conn, user_id: str, enrich: dict) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# RÉSUMÉ D'UNE SOURCE DE DONNÉES (carte d'info table + dates min/max)
+# ══════════════════════════════════════════════════════════════════════════════
+def _format_date_fr(date_str: str) -> str:
+    """Convertit '2023-04-10' en '10/04/2023'. Renvoie la chaîne d'origine en cas d'échec."""
+    if not date_str:
+        return "—"
+    try:
+        parts = str(date_str).split(" ")[0].split("-")
+        if len(parts) == 3:
+            return f"{parts[2]}/{parts[1]}/{parts[0]}"
+    except Exception:
+        pass
+    return str(date_str)
+
+
+def render_table_summary(table_name: str, columns: list, labels_map: dict) -> None:
+    """
+    Affiche une carte stylisée résumant la source de données sélectionnée :
+    • nombre total d'enregistrements
+    • dates min/max pour chaque colonne de type date
+    """
+    date_cols = tuple(c for c in columns if is_date_col(c))
+    summary   = get_table_summary(table_name, date_cols)
+
+    row_count = summary["row_count"]
+    date_info = summary["date_info"]
+    # Formatage français : espace comme séparateur de milliers
+    row_count_fmt = f"{row_count:,}".replace(",", " ")
+
+    # ── Bloc principal : carte sombre avec accent violet ─────────────────────
+    header_html = (
+        "<div style='background:linear-gradient(135deg,#13151d 0%,#161826 100%);"
+        "border:1px solid #2a2d3e;border-left:3px solid #a78bfa;"
+        "border-radius:10px;padding:14px 18px;margin:8px 0 14px 0;'>"
+
+        # En-tête : nom de table + badge nombre de lignes
+        "<div style='display:flex;align-items:center;justify-content:space-between;"
+        "flex-wrap:wrap;gap:10px;margin-bottom:10px;'>"
+        "<div>"
+        "<span style='color:#94a3b8;font-size:.68rem;text-transform:uppercase;"
+        "letter-spacing:1.2px;font-family:JetBrains Mono,monospace;'>"
+        "📊 Source de données</span><br>"
+        f"<span style='color:#e8eaf0;font-size:1.05rem;font-weight:700;"
+        f"font-family:Syne,sans-serif;'>{table_name}</span>"
+        "</div>"
+        "<div style='background:#1e293b;border:1px solid #334155;border-radius:20px;"
+        "padding:4px 14px;'>"
+        "<span style='color:#94a3b8;font-size:.7rem;font-family:JetBrains Mono,monospace;'>"
+        "enregistrements</span> "
+        f"<span style='color:#86efac;font-weight:700;font-family:JetBrains Mono,monospace;'>"
+        f"{row_count_fmt}</span>"
+        "</div></div>"
+    )
+
+    # ── Lignes : une par colonne de type date ────────────────────────────────
+    if date_info:
+        rows_html = "<div style='display:flex;flex-direction:column;gap:6px;'>"
+        for col, info in date_info.items():
+            label = labels_map.get(col, col)
+            vmin  = _format_date_fr(info.get("min"))
+            vmax  = _format_date_fr(info.get("max"))
+            rows_html += (
+                "<div style='display:flex;align-items:center;gap:10px;"
+                "background:#0f111a;border:1px solid #1e2130;border-radius:6px;"
+                "padding:6px 12px;font-family:JetBrains Mono,monospace;font-size:.78rem;'>"
+                f"<span style='color:#a5f3fc;min-width:140px;'>📅 {label}</span>"
+                f"<span style='color:#64748b;'>du</span>"
+                f"<span style='color:#86efac;font-weight:600;'>{vmin}</span>"
+                f"<span style='color:#64748b;'>au</span>"
+                f"<span style='color:#86efac;font-weight:600;'>{vmax}</span>"
+                "</div>"
+            )
+        rows_html += "</div>"
+    else:
+        rows_html = (
+            "<div style='color:#475569;font-size:.78rem;font-style:italic;"
+            "font-family:JetBrains Mono,monospace;'>"
+            "Aucune colonne de type date.</div>"
+        )
+
+    st.markdown(header_html + rows_html + "</div>", unsafe_allow_html=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # POINT D'ENTRÉE UNIQUE
 # ══════════════════════════════════════════════════════════════════════════════
 def run_app(schema: dict, enrich: dict):
@@ -3615,6 +3808,10 @@ def run_app(schema: dict, enrich: dict):
     st.markdown("<div style='margin-bottom:8px;'></div>", unsafe_allow_html=True)
     current_table = st.session_state.selected_table
 
+    # ── Résumé de la source de données ─────────────────────────────────────────
+    _summary_labels = schema.get(current_table, {}).get("labels", {}) or {}
+    render_table_summary(current_table, tables[current_table], _summary_labels)
+
     # ── Sources de données ─────────────────────────────────────────────────────
     available_joins = get_available_joins(schema, current_table, st.session_state.joins)
 
@@ -3691,18 +3888,31 @@ def run_app(schema: dict, enrich: dict):
     with fb:
         is_date = is_date_col(new_col)
         if is_date:
-            st.markdown("<span style='color:#a78bfa;font-size:.78rem;'>📅 Colonne date</span>",
-                        unsafe_allow_html=True)
+            new_date_mode = st.radio(
+                "Mode de date",
+                ["📅 Date unique", "📆 Plage de dates"],
+                key="new_date_mode",
+                horizontal=False,
+                label_visibility="collapsed",
+            )
         else:
             new_op = st.selectbox("Opérateur", OP_LABELS, key="new_op", label_visibility="collapsed")
     with fc:
         if is_date:
-            dc, bc = st.columns(2)
-            with dc:
-                new_date = st.date_input("Date", key="new_date")
-            with bc:
-                new_dates = st.text_input("Dates multiples", key="new_bulk_dates",
-                                          placeholder="YYYY-MM-DD, YYYY-MM-DD...")
+            is_range_mode = (new_date_mode == "📆 Plage de dates")
+            if is_range_mode:
+                rc1, rc2 = st.columns(2)
+                with rc1:
+                    new_date_start = st.date_input("Date de début", key="new_date_start")
+                with rc2:
+                    new_date_end = st.date_input("Date de fin", key="new_date_end")
+            else:
+                dc, bc = st.columns(2)
+                with dc:
+                    new_date = st.date_input("Date", key="new_date")
+                with bc:
+                    new_dates = st.text_input("Dates multiples", key="new_bulk_dates",
+                                              placeholder="YYYY-MM-DD, YYYY-MM-DD...")
         else:
             st.text_area("Valeur(s)", key="new_val",
                          placeholder="Une valeur, ou plusieurs séparées par des virgules / sauts de ligne",
@@ -3719,31 +3929,54 @@ def run_app(schema: dict, enrich: dict):
             # Construire le dict de condition (sans join_op/or_target)
             _cond = None
             if is_date:
-                if new_dates:
-                    # Parser le bulk YYYY-MM-DD
-                    _vals = [d.strip() for d in re.split(r"[,\n]", new_dates) if d.strip()]
-                    _dts = []
-                    for v in _vals:
-                        if re.match(r"^\d{4}-\d{2}-\d{2}$", v):
-                            _dts.append(v)
+                _is_range = (st.session_state.get("new_date_mode") == "📆 Plage de dates")
+                if _is_range:
+                    _ds = st.session_state.get("new_date_start")
+                    _de = st.session_state.get("new_date_end")
+                    if _ds and _de:
+                        if _ds > _de:
+                            st.warning("La date de début doit être antérieure à la date de fin.")
                         else:
-                            st.warning(f"Format de date invalide : {v}")
-                    if _dts:
+                            _s = _ds.strftime("%Y-%m-%d")
+                            _e = _de.strftime("%Y-%m-%d")
+                            _cond = {
+                                "column": new_col, "label": _new_label,
+                                "operator": "Entre",
+                                "value": (_s, _e),
+                                "is_date": True, "is_bulk": False, "is_range": True,
+                            }
+                    else:
+                        st.warning("Veuillez sélectionner une date de début et une date de fin.")
+                else:
+                    _bulk_raw = st.session_state.get("new_bulk_dates", "")
+                    _single   = st.session_state.get("new_date")
+                    if _bulk_raw:
+                        # Parser le bulk YYYY-MM-DD
+                        _vals = [d.strip() for d in re.split(r"[,\n]", _bulk_raw) if d.strip()]
+                        _dts = []
+                        for v in _vals:
+                            if re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+                                _dts.append(v)
+                            else:
+                                st.warning(f"Format de date invalide : {v}")
+                        if _dts:
+                            _cond = {
+                                "column": new_col, "label": _new_label,
+                                "operator": "Commence par",
+                                "value": ", ".join(_dts), "values": _dts,
+                                "is_date": True, "is_bulk": True,
+                            }
+                        else:
+                            st.warning("Aucune date valide")
+                    elif _single is not None:
                         _cond = {
                             "column": new_col, "label": _new_label,
                             "operator": "Commence par",
-                            "value": ", ".join(_dts), "values": _dts,
-                            "is_date": True, "is_bulk": True,
+                            "value": _single.strftime("%Y-%m-%d"),
+                            "is_date": True, "is_bulk": False,
                         }
                     else:
-                        st.warning("Aucune date valide")
-                else:
-                    _cond = {
-                        "column": new_col, "label": _new_label,
-                        "operator": "Commence par",
-                        "value": new_date.strftime("%Y-%m-%d"),
-                        "is_date": True, "is_bulk": False,
-                    }
+                        st.warning("Veuillez sélectionner une date.")
             else:
                 raw    = st.session_state.get("new_val", "")
                 values = [v.strip() for v in re.split(r"[,\n]", raw) if v.strip()]
