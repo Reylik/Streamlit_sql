@@ -3227,8 +3227,6 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
     if node["type"] == "ghost":
         pending = node["pending"]
         target  = node["target"]
-        sym     = OPERATORS[pending["operator"]][0]
-        label   = f"{pending['column']} {sym} '{pending.get('value','')}'"
         oc      = BRANCH_STYLES[pending["join_op"]]["border"]
         m       = f"ghost-{target}"
         css = (
@@ -3247,10 +3245,17 @@ def _render_node(node, conditions, prefix_parts=None, is_last=True, is_root=Fals
         )
         tip = ("Relier à la dernière feuille" if target == "leaf"
                else "Créer une nouvelle branche au sommet")
-        # Label lisible : "ID Passeport contient « test »" (comme une feuille committée)
+        # Label lisible selon le type de la condition en attente
         _coldisp = pending.get("label", pending["column"])
-        if pending.get("is_date"):
-            cond_txt = f"{_coldisp} en {_date_label(pending['value'])}"
+        if pending.get("is_pair"):
+            _n = len(pending.get("pairs", []))
+            cond_txt = f"{_coldisp} parmi {_n} couple{'s' if _n > 1 else ''}"
+        elif pending.get("is_date"):
+            if isinstance(pending["value"], (tuple, list)) and len(pending["value"]) == 2:
+                d1, d2 = pending["value"]
+                cond_txt = f"{_coldisp} entre le {_format_date_fr(d1)} et le {_format_date_fr(d2)}"
+            else:
+                cond_txt = f"{_coldisp} en {_date_label(pending['value'])}"
         elif pending.get("is_bulk"):
             _ops = OP_NATURAL.get(pending["operator"], pending["operator"])
             _vals = pending.get("values", [])
@@ -3403,7 +3408,6 @@ def render_tree(conditions, table):
 
     # En mode placement : rappel + bouton annuler discret
     if _pending:
-        sym = OPERATORS[_pending["operator"]][0]
         st.markdown(
             "<div style='margin-top:8px;color:#64748b;font-size:.72rem;"
             "font-family:JetBrains Mono,monospace;'>"
