@@ -3949,219 +3949,283 @@ def run_app(schema: dict, enrich: dict):
     else:
         current_cols = tables[current_table]
 
-    # ── Ajout de condition ────────────────────────────────────────────────────
+    # ── Ajout de critère ──────────────────────────────────────────────────────
     # Labels lisibles pour le sélecteur de colonnes
     col_labels_map = get_column_labels(schema, current_table, st.session_state.joins)
 
-    st.markdown("### ➕ Ajouter une condition")
-    fa, fb, fc, fd = st.columns([2, 2, 3, 1])
-    with fa:
-        new_col = st.selectbox(
-            "Colonne", current_cols, key="new_col", label_visibility="collapsed",
-            format_func=lambda c: col_labels_map.get(c, c),
-        )
-    with fb:
-        is_date = is_date_col(new_col)
-        if is_date:
-            new_date_mode = st.radio(
-                "Mode de date",
-                ["📅 Date unique", "📆 Plage de dates"],
-                key="new_date_mode",
-                horizontal=False,
-                label_visibility="collapsed",
+    # Init du tampon de couples en attente
+    if "pending_pairs" not in st.session_state:
+        st.session_state.pending_pairs = []
+    if "pair_input_nonce" not in st.session_state:
+        st.session_state.pair_input_nonce = 0
+
+    st.markdown("### ➕ Ajouter un critère")
+
+    # ── Sélecteur de type de critère ─────────────────────────────────────────
+    crit_type = st.radio(
+        "Type de critère",
+        ["🔍 Simple", "🔗 Couples (col1, col2)"],
+        horizontal=True,
+        key="crit_type",
+        label_visibility="collapsed",
+    )
+    is_pair_mode = crit_type.startswith("🔗")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # MODE SIMPLE : 1 colonne, 1 opérateur, 1+ valeur(s)
+    # ════════════════════════════════════════════════════════════════════════
+    if not is_pair_mode:
+        fa, fb, fc, fd = st.columns([2, 2, 3, 1])
+        with fa:
+            new_col = st.selectbox(
+                "Colonne", current_cols, key="new_col", label_visibility="collapsed",
+                format_func=lambda c: col_labels_map.get(c, c),
             )
-        else:
-            new_op = st.selectbox("Opérateur", OP_LABELS, key="new_op", label_visibility="collapsed")
-    with fc:
-        if is_date:
-            is_range_mode = (new_date_mode == "📆 Plage de dates")
-            if is_range_mode:
-                rc1, rc2 = st.columns(2)
-                with rc1:
-                    new_date_start = st.date_input("Date de début", key="new_date_start")
-                with rc2:
-                    new_date_end = st.date_input("Date de fin", key="new_date_end")
-            else:
-                dc, bc = st.columns(2)
-                with dc:
-                    new_date = st.date_input("Date", key="new_date")
-                with bc:
-                    new_dates = st.text_input("Dates multiples", key="new_bulk_dates",
-                                              placeholder="YYYY-MM-DD, YYYY-MM-DD...")
-        else:
-            st.text_area("Valeur(s)", key="new_val",
-                         placeholder="Une valeur, ou plusieurs séparées par des virgules / sauts de ligne",
-                         height=80, label_visibility="collapsed")
-    with fd:
-        new_join = (st.radio("Lier", ["ET", "OU"], horizontal=False, key="new_join",
-                             label_visibility="collapsed")
-                    if st.session_state.conditions else "ET")
-
-    btn_a, btn_b = st.columns([3, 1])
-    with btn_a:
-        if st.button("➕ Ajouter la condition", width="stretch"):
-            _new_label = col_labels_map.get(new_col, new_col)
-            # Construire le dict de condition (sans join_op/or_target)
-            _cond = None
+        with fb:
+            is_date = is_date_col(new_col)
             if is_date:
-                _is_range = (st.session_state.get("new_date_mode") == "📆 Plage de dates")
-                if _is_range:
-                    _ds = st.session_state.get("new_date_start")
-                    _de = st.session_state.get("new_date_end")
-                    if _ds and _de:
-                        if _ds > _de:
-                            st.warning("La date de début doit être antérieure à la date de fin.")
-                        else:
-                            _s = _ds.strftime("%Y-%m-%d")
-                            _e = _de.strftime("%Y-%m-%d")
-                            _cond = {
-                                "column": new_col, "label": _new_label,
-                                "operator": "Entre",
-                                "value": (_s, _e),
-                                "is_date": True, "is_bulk": False, "is_range": True,
-                            }
-                    else:
-                        st.warning("Veuillez sélectionner une date de début et une date de fin.")
-                else:
-                    _bulk_raw = st.session_state.get("new_bulk_dates", "")
-                    _single   = st.session_state.get("new_date")
-                    if _bulk_raw:
-                        # Parser le bulk YYYY-MM-DD
-                        _vals = [d.strip() for d in re.split(r"[,\n]", _bulk_raw) if d.strip()]
-                        _dts = []
-                        for v in _vals:
-                            if re.match(r"^\d{4}-\d{2}-\d{2}$", v):
-                                _dts.append(v)
-                            else:
-                                st.warning(f"Format de date invalide : {v}")
-                        if _dts:
-                            _cond = {
-                                "column": new_col, "label": _new_label,
-                                "operator": "Commence par",
-                                "value": ", ".join(_dts), "values": _dts,
-                                "is_date": True, "is_bulk": True,
-                            }
-                        else:
-                            st.warning("Aucune date valide")
-                    elif _single is not None:
-                        _cond = {
-                            "column": new_col, "label": _new_label,
-                            "operator": "Commence par",
-                            "value": _single.strftime("%Y-%m-%d"),
-                            "is_date": True, "is_bulk": False,
-                        }
-                    else:
-                        st.warning("Veuillez sélectionner une date.")
+                new_date_mode = st.radio(
+                    "Mode de date",
+                    ["📅 Date unique", "📆 Plage de dates"],
+                    key="new_date_mode",
+                    horizontal=False,
+                    label_visibility="collapsed",
+                )
             else:
-                raw    = st.session_state.get("new_val", "")
-                values = [v.strip() for v in re.split(r"[,\n]", raw) if v.strip()]
-                if not values:
-                    st.warning("Veuillez entrer au moins une valeur.")
-                elif len(values) == 1:
-                    _cond = {
-                        "column": new_col, "label": _new_label, "operator": new_op,
-                        "value": values[0], "is_date": False, "is_bulk": False,
-                    }
+                new_op = st.selectbox("Opérateur", OP_LABELS, key="new_op", label_visibility="collapsed")
+        with fc:
+            if is_date:
+                is_range_mode = (new_date_mode == "📆 Plage de dates")
+                if is_range_mode:
+                    rc1, rc2 = st.columns(2)
+                    with rc1:
+                        new_date_start = st.date_input("Date de début", key="new_date_start")
+                    with rc2:
+                        new_date_end = st.date_input("Date de fin", key="new_date_end")
                 else:
-                    _cond = {
-                        "column": new_col, "label": _new_label, "operator": new_op,
-                        "value": ", ".join(values), "values": values,
-                        "is_date": False, "is_bulk": True,
-                    }
+                    dc, bc = st.columns(2)
+                    with dc:
+                        new_date = st.date_input("Date", key="new_date")
+                    with bc:
+                        new_dates = st.text_input("Dates multiples", key="new_bulk_dates",
+                                                  placeholder="YYYY-MM-DD, YYYY-MM-DD...")
+            else:
+                st.text_area("Valeur(s)", key="new_val",
+                             placeholder="Une valeur, ou plusieurs séparées par des virgules / sauts de ligne",
+                             height=80, label_visibility="collapsed")
+        with fd:
+            new_join = (st.radio("Lier", ["ET", "OU"], horizontal=False, key="new_join",
+                                 label_visibility="collapsed")
+                        if st.session_state.conditions else "ET")
 
-            if _cond is not None:
-                if not st.session_state.conditions:
-                    # Première condition → ajout direct (pas de choix)
-                    _cond["join_op"]   = "ET"
-                    _cond["or_target"] = "leaf"
-                    st.session_state.conditions.append(_cond)
-                    st.rerun()
-                else:
-                    # ET comme OU → mode placement (choix sur l'arbre)
-                    _cond["join_op"] = new_join
-                    st.session_state._pending_cond = _cond
-                    st.rerun()
-    with btn_b:
-        if st.button("🗑 Effacer", width="stretch"):
-            st.session_state.conditions   = []
-            st.session_state.results      = None
-            st.session_state.enrich_count = None
-            st.session_state.pop("_pending_cond", None)
-            st.rerun()
-
-    # ── Recherche par couples (col1, col2) en bulk ───────────────────────────
-    with st.expander("🔗 Recherche par couples (col1, col2)", expanded=False):
-        st.caption(
-            "Pour rechercher des couples précis (ex. nom + date d'inscription). "
-            "Une ligne par couple, séparée par une virgule."
-        )
-        pa, pb = st.columns(2)
+    # ════════════════════════════════════════════════════════════════════════
+    # MODE COUPLES : 2 colonnes, deux champs par couple, accumulation
+    # ════════════════════════════════════════════════════════════════════════
+    else:
+        # Sélection des 2 colonnes
+        pa, pb, pj = st.columns([2, 2, 1])
         with pa:
             _pair_col1 = st.selectbox(
                 "1ère colonne", current_cols, key="pair_col1",
                 format_func=lambda c: col_labels_map.get(c, c),
             )
         with pb:
-            # Par défaut, la 2e colonne est différente de la 1ère
             _other = [c for c in current_cols if c != _pair_col1]
             _pair_col2 = st.selectbox(
                 "2ème colonne", _other, key="pair_col2",
                 format_func=lambda c: col_labels_map.get(c, c),
             )
-        _pair_text = st.text_area(
-            "Couples",
-            key="pair_text",
-            height=140,
-            placeholder=(f"Un couple par ligne, séparé par une virgule\n"
-                         f"Exemple :\n"
-                         f"Dupont, 1985-03-15\n"
-                         f"Martin, 1990-07-22\n"
-                         f"Durand, 2001-12-04"),
-        )
-        _pair_join = (
-            st.radio("Lier au reste", ["ET", "OU"], horizontal=True,
-                     key="pair_join")
-            if st.session_state.conditions else "ET"
-        )
-        if st.button("➕ Ajouter la recherche par couples", key="add_pair",
-                     width="stretch"):
-            # Parse des lignes : virgule ou tab comme séparateur
-            lines = [ln.strip() for ln in _pair_text.splitlines() if ln.strip()]
-            _pairs = []
-            _bad   = []
-            for ln in lines:
-                parts = [p.strip() for p in re.split(r"[,\t]", ln, maxsplit=1) if p.strip()]
-                if len(parts) == 2:
-                    _pairs.append((parts[0], parts[1]))
-                else:
-                    _bad.append(ln)
-            if _bad:
-                st.warning(f"{len(_bad)} ligne(s) ignorée(s), format attendu : « v1, v2 ».")
-            if not _pairs:
-                st.warning("Aucun couple valide. Saisissez au moins une ligne « v1, v2 ».")
+        with pj:
+            new_join = (st.radio("Lier", ["ET", "OU"], horizontal=False,
+                                 key="new_join_pair", label_visibility="collapsed")
+                        if st.session_state.conditions else "ET")
+
+        # ── Saisie d'un couple : 2 champs côte-à-côte + bouton "ajouter" ──────
+        _label1 = col_labels_map.get(_pair_col1, _pair_col1)
+        _label2 = col_labels_map.get(_pair_col2, _pair_col2)
+        # nonce permet de "vider" les inputs après ajout en changeant la clé
+        _nonce = st.session_state.pair_input_nonce
+        ia, ib, iadd = st.columns([2.5, 2.5, 1])
+        with ia:
+            _v1 = st.text_input(
+                f"Valeur pour {_label1}",
+                key=f"pair_v1_{_nonce}",
+                placeholder=_label1,
+            )
+        with ib:
+            # Si la 2e colonne est une date, proposer un date_input
+            if is_date_col(_pair_col2):
+                _v2_date = st.date_input(
+                    f"Valeur pour {_label2}",
+                    key=f"pair_v2_{_nonce}",
+                )
+                _v2 = _v2_date.strftime("%Y-%m-%d") if _v2_date else ""
             else:
-                _l1 = col_labels_map.get(_pair_col1, _pair_col1)
-                _l2 = col_labels_map.get(_pair_col2, _pair_col2)
-                _cond_pair = {
-                    "column":     f"({_pair_col1}, {_pair_col2})",   # affichage de secours
-                    "label":      f"{_l1} + {_l2}",
-                    "columns":    [_pair_col1, _pair_col2],
-                    "col_labels": [_l1, _l2],
-                    "operator":   "Couples",
-                    "pairs":      _pairs,
-                    "is_pair":    True,
-                    "is_date":    False,
-                    "is_bulk":    False,
-                }
-                if not st.session_state.conditions:
-                    _cond_pair["join_op"]   = "ET"
-                    _cond_pair["or_target"] = "leaf"
-                    st.session_state.conditions.append(_cond_pair)
+                _v2 = st.text_input(
+                    f"Valeur pour {_label2}",
+                    key=f"pair_v2_{_nonce}",
+                    placeholder=_label2,
+                )
+        with iadd:
+            st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+            if st.button("➕ Au lot", key="add_pair_to_list", width="stretch",
+                         help="Ajouter ce couple à la liste"):
+                if _v1.strip() and _v2.strip():
+                    st.session_state.pending_pairs.append((_v1.strip(), _v2.strip()))
+                    st.session_state.pair_input_nonce += 1  # vide les inputs au rerun
                     st.rerun()
                 else:
-                    _cond_pair["join_op"] = _pair_join
-                    st.session_state._pending_cond = _cond_pair
-                    st.rerun()
+                    st.warning("Remplissez les deux champs.")
+
+        # ── Affichage des couples accumulés ──────────────────────────────────
+        if st.session_state.pending_pairs:
+            st.markdown(
+                "<div style='color:#94a3b8;font-size:.72rem;text-transform:uppercase;"
+                "letter-spacing:1px;font-family:JetBrains Mono,monospace;margin:10px 0 6px;'>"
+                f"📋 {len(st.session_state.pending_pairs)} couple(s) en attente</div>",
+                unsafe_allow_html=True,
+            )
+            for _pi, (_pv1, _pv2) in enumerate(st.session_state.pending_pairs):
+                rc1, rc2 = st.columns([10, 1])
+                with rc1:
+                    st.markdown(
+                        f"<div style='background:#13151d;border:1px solid #1e2130;"
+                        f"border-radius:8px;padding:6px 12px;margin-bottom:4px;"
+                        f"font-family:JetBrains Mono,monospace;font-size:.78rem;'>"
+                        f"<span style='color:#a5f3fc;'>{_label1}</span> = "
+                        f"<span style='color:#86efac;'>«{_pv1}»</span> "
+                        f"<span style='color:#fbbf24;'>ET</span> "
+                        f"<span style='color:#a5f3fc;'>{_label2}</span> = "
+                        f"<span style='color:#86efac;'>«{_pv2}»</span></div>",
+                        unsafe_allow_html=True,
+                    )
+                with rc2:
+                    if st.button("🗑", key=f"del_pending_pair_{_pi}",
+                                 help="Retirer ce couple"):
+                        st.session_state.pending_pairs.pop(_pi)
+                        st.rerun()
+        else:
+            st.markdown(
+                "<div style='color:#475569;font-size:.78rem;font-style:italic;"
+                "font-family:JetBrains Mono,monospace;margin:10px 0 6px;'>"
+                "Aucun couple en attente. Saisissez deux valeurs et cliquez sur « Au lot ».</div>",
+                unsafe_allow_html=True,
+            )
+
+    btn_a, btn_b = st.columns([3, 1])
+    with btn_a:
+        if st.button("➕ Ajouter le critère", width="stretch", type="primary"):
+            _cond = None
+
+            # ── Mode Couples ─────────────────────────────────────────────────
+            if is_pair_mode:
+                if not st.session_state.pending_pairs:
+                    st.warning("Ajoutez au moins un couple à la liste avant de valider.")
+                else:
+                    _l1 = col_labels_map.get(_pair_col1, _pair_col1)
+                    _l2 = col_labels_map.get(_pair_col2, _pair_col2)
+                    _cond = {
+                        "column":     f"({_pair_col1}, {_pair_col2})",
+                        "label":      f"{_l1} + {_l2}",
+                        "columns":    [_pair_col1, _pair_col2],
+                        "col_labels": [_l1, _l2],
+                        "operator":   "Couples",
+                        "pairs":      list(st.session_state.pending_pairs),
+                        "is_pair":    True,
+                        "is_date":    False,
+                        "is_bulk":    False,
+                    }
+
+            # ── Mode Simple ──────────────────────────────────────────────────
+            else:
+                _new_label = col_labels_map.get(new_col, new_col)
+                if is_date:
+                    _is_range = (st.session_state.get("new_date_mode") == "📆 Plage de dates")
+                    if _is_range:
+                        _ds = st.session_state.get("new_date_start")
+                        _de = st.session_state.get("new_date_end")
+                        if _ds and _de:
+                            if _ds > _de:
+                                st.warning("La date de début doit être antérieure à la date de fin.")
+                            else:
+                                _s = _ds.strftime("%Y-%m-%d")
+                                _e = _de.strftime("%Y-%m-%d")
+                                _cond = {
+                                    "column": new_col, "label": _new_label,
+                                    "operator": "Entre",
+                                    "value": (_s, _e),
+                                    "is_date": True, "is_bulk": False, "is_range": True,
+                                }
+                        else:
+                            st.warning("Veuillez sélectionner une date de début et une date de fin.")
+                    else:
+                        _bulk_raw = st.session_state.get("new_bulk_dates", "")
+                        _single   = st.session_state.get("new_date")
+                        if _bulk_raw:
+                            _vals = [d.strip() for d in re.split(r"[,\n]", _bulk_raw) if d.strip()]
+                            _dts = []
+                            for v in _vals:
+                                if re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+                                    _dts.append(v)
+                                else:
+                                    st.warning(f"Format de date invalide : {v}")
+                            if _dts:
+                                _cond = {
+                                    "column": new_col, "label": _new_label,
+                                    "operator": "Commence par",
+                                    "value": ", ".join(_dts), "values": _dts,
+                                    "is_date": True, "is_bulk": True,
+                                }
+                            else:
+                                st.warning("Aucune date valide")
+                        elif _single is not None:
+                            _cond = {
+                                "column": new_col, "label": _new_label,
+                                "operator": "Commence par",
+                                "value": _single.strftime("%Y-%m-%d"),
+                                "is_date": True, "is_bulk": False,
+                            }
+                        else:
+                            st.warning("Veuillez sélectionner une date.")
+                else:
+                    raw    = st.session_state.get("new_val", "")
+                    values = [v.strip() for v in re.split(r"[,\n]", raw) if v.strip()]
+                    if not values:
+                        st.warning("Veuillez entrer au moins une valeur.")
+                    elif len(values) == 1:
+                        _cond = {
+                            "column": new_col, "label": _new_label, "operator": new_op,
+                            "value": values[0], "is_date": False, "is_bulk": False,
+                        }
+                    else:
+                        _cond = {
+                            "column": new_col, "label": _new_label, "operator": new_op,
+                            "value": ", ".join(values), "values": values,
+                            "is_date": False, "is_bulk": True,
+                        }
+
+            # ── Finalisation : ajout direct ou placement dans l'arbre ──────────
+            if _cond is not None:
+                if not st.session_state.conditions:
+                    _cond["join_op"]   = "ET"
+                    _cond["or_target"] = "leaf"
+                    st.session_state.conditions.append(_cond)
+                else:
+                    _cond["join_op"] = new_join
+                    st.session_state._pending_cond = _cond
+                # Vider le tampon de couples après ajout réussi
+                if is_pair_mode:
+                    st.session_state.pending_pairs = []
+                    st.session_state.pair_input_nonce += 1
+                st.rerun()
+    with btn_b:
+        if st.button("🗑 Effacer", width="stretch"):
+            st.session_state.conditions    = []
+            st.session_state.results       = None
+            st.session_state.enrich_count  = None
+            st.session_state.pending_pairs = []
+            st.session_state.pop("_pending_cond", None)
+            st.rerun()
 
     st.markdown("---")
 
