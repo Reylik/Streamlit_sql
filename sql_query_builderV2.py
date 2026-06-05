@@ -3953,6 +3953,10 @@ def run_app(schema: dict, enrich: dict):
     # Labels lisibles pour le sélecteur de colonnes
     col_labels_map = get_column_labels(schema, current_table, st.session_state.joins)
 
+    # Nonce pour pouvoir "vider" les textareas du mode couples au prochain run
+    if "pair_text_nonce" not in st.session_state:
+        st.session_state.pair_text_nonce = 0
+
     st.markdown("### ➕ Ajouter un critère")
 
     # ── Sélecteur de type de critère ─────────────────────────────────────────
@@ -4037,6 +4041,9 @@ def run_app(schema: dict, enrich: dict):
         # ── Saisie en bulk : 2 textareas côte-à-côte ─────────────────────────
         _label1 = col_labels_map.get(_pair_col1, _pair_col1)
         _label2 = col_labels_map.get(_pair_col2, _pair_col2)
+        _nonce  = st.session_state.pair_text_nonce
+        _key1   = f"pair_text1_{_nonce}"
+        _key2   = f"pair_text2_{_nonce}"
 
         st.caption(
             "💡 Collez vos données : une valeur par ligne dans chaque zone. "
@@ -4047,14 +4054,14 @@ def run_app(schema: dict, enrich: dict):
         with ta1:
             _pair_text1 = st.text_area(
                 f"Valeurs pour « {_label1} »",
-                key="pair_text1",
+                key=_key1,
                 height=180,
                 placeholder=f"Une valeur de {_label1} par ligne\nDupont\nMartin\nDurand",
             )
         with ta2:
             _pair_text2 = st.text_area(
                 f"Valeurs pour « {_label2} »",
-                key="pair_text2",
+                key=_key2,
                 height=180,
                 placeholder=(f"Une valeur de {_label2} par ligne\n"
                              f"1985-03-15\n1990-07-22\n2001-12-04"
@@ -4115,11 +4122,9 @@ def run_app(schema: dict, enrich: dict):
 
             # ── Mode Couples ─────────────────────────────────────────────────
             if is_pair_mode:
-                # Re-parser ici (au cas où la dernière saisie n'a pas encore rerun)
-                _raw1 = st.session_state.get("pair_text1", "")
-                _raw2 = st.session_state.get("pair_text2", "")
-                _l1lines = [ln.strip() for ln in _raw1.splitlines() if ln.strip()]
-                _l2lines = [ln.strip() for ln in _raw2.splitlines() if ln.strip()]
+                # Lire directement les variables locales (à jour pour ce run)
+                _l1lines = [ln.strip() for ln in _pair_text1.splitlines() if ln.strip()]
+                _l2lines = [ln.strip() for ln in _pair_text2.splitlines() if ln.strip()]
 
                 if not _l1lines and not _l2lines:
                     st.warning("Saisissez des valeurs dans les deux zones.")
@@ -4225,19 +4230,16 @@ def run_app(schema: dict, enrich: dict):
                     _cond["join_op"] = new_join
                     st.session_state._pending_cond = _cond
                 # Vider les zones de couples après ajout réussi
+                # (en incrémentant la nonce → les widgets seront recréés vides)
                 if is_pair_mode:
-                    st.session_state["pair_text1"] = ""
-                    st.session_state["pair_text2"] = ""
+                    st.session_state.pair_text_nonce += 1
                 st.rerun()
     with btn_b:
         if st.button("🗑 Effacer", width="stretch"):
             st.session_state.conditions    = []
             st.session_state.results       = None
             st.session_state.enrich_count  = None
-            if "pair_text1" in st.session_state:
-                st.session_state["pair_text1"] = ""
-            if "pair_text2" in st.session_state:
-                st.session_state["pair_text2"] = ""
+            st.session_state.pair_text_nonce += 1   # vide les textareas du mode couples
             st.session_state.pop("_pending_cond", None)
             st.rerun()
 
