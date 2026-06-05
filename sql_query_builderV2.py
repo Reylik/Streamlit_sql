@@ -572,6 +572,24 @@ def build_preview_tree(conditions, pending):
 def _sql_from_tree(node, conditions, params, display):
     if node["type"] == "leaf":
         c = conditions[node["idx"]]
+        # ── Recherche par couples (col1=v1a AND col2=v1b) OR (col1=v2a AND col2=v2b) ──
+        if c.get("is_pair"):
+            col1, col2 = c["columns"]
+            pairs      = c.get("pairs", [])
+            if not pairs:
+                return "1=0"  # liste vide : aucune ligne
+            sub_clauses = []
+            for v1, v2 in pairs:
+                if display:
+                    # Échappement basique des apostrophes pour l'affichage
+                    v1d = str(v1).replace("'", "''")
+                    v2d = str(v2).replace("'", "''")
+                    sub_clauses.append(f"({col1} = '{v1d}' AND {col2} = '{v2d}')")
+                else:
+                    sub_clauses.append(f"({col1} = ? AND {col2} = ?)")
+                    params.extend([v1, v2])
+            return "(" + " OR ".join(sub_clauses) + ")"
+
         if c.get("is_bulk"):
             sym, fn = OPERATORS[c["operator"]]
             if display:
@@ -2931,6 +2949,27 @@ def _date_label(val):
 def _leaf_html(conditions, idx):
     c           = conditions[idx]
     col_display = c.get("label", c["column"])   # label si dispo, sinon nom brut
+
+    # ── Recherche par couples ────────────────────────────────────────────────
+    if c.get("is_pair"):
+        pairs = c.get("pairs", [])
+        n     = len(pairs)
+        col1, col2 = c["columns"]
+        col_labels = c.get("col_labels") or [col1, col2]
+        # Aperçu des 2 premiers couples
+        shown = pairs[:2]
+        preview_items = []
+        for v1, v2 in shown:
+            preview_items.append(f"«{v1}·{v2}»")
+        preview = " · ".join(preview_items)
+        suffix  = (f" <span style='color:#64748b;font-size:.75rem;'>+{n-2} autres</span>"
+                   if n > 2 else "")
+        return (f"<span class='t-leaf'>"
+                f"<b style='color:#a5f3fc;'>{col_labels[0]} + {col_labels[1]}</b> "
+                f"<span style='color:#fbbf24;'>parmi {n} couple{'s' if n > 1 else ''}</span> "
+                f"<span style='color:#86efac;'>[{preview}{suffix}]</span>"
+                f"</span>")
+
     if c.get("is_date"):
         if isinstance(c["value"], (tuple, list)) and len(c["value"]) == 2:
             date1, date2 = c["value"]
@@ -2993,6 +3032,42 @@ def _render_leaf_editor(conditions, idx):
     cond    = conditions[idx]
     is_date = cond.get("is_date", False)
     is_bulk = cond.get("is_bulk", False)
+    is_pair = cond.get("is_pair", False)
+
+    # ── Édition d'une condition couples (pair) ───────────────────────────────
+    if is_pair:
+        pairs        = cond.get("pairs", [])
+        col_labels   = cond.get("col_labels") or cond["columns"]
+        current_text = "\n".join(f"{v1}, {v2}" for v1, v2 in pairs)
+        st.text_area(
+            f"Couples ({col_labels[0]}, {col_labels[1]})",
+            value=current_text, key=f"epair_{idx}",
+            height=140, label_visibility="visible",
+            placeholder="Un couple par ligne, séparé par une virgule\nExemple :\nDupont, 1985-03-15\nMartin, 1990-07-22",
+        )
+        e1, e2 = st.columns([1, 1])
+        with e1:
+            if st.button("✓ Valider", key=f"eok_{idx}", width="stretch"):
+                raw   = st.session_state.get(f"epair_{idx}", "")
+                lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+                new_pairs = []
+                for ln in lines:
+                    # On accepte virgule ou tab comme séparateur
+                    parts = [p.strip() for p in re.split(r"[,\t]", ln, maxsplit=1) if p.strip()]
+                    if len(parts) == 2:
+                        new_pairs.append((parts[0], parts[1]))
+                if new_pairs:
+                    st.session_state.conditions[idx]["pairs"] = new_pairs
+                    st.session_state.editing.pop(idx, None)
+                    st.rerun()
+                else:
+                    st.warning("Entrez au moins un couple valide « valeur1, valeur2 ».")
+        with e2:
+            if st.button("🗑 Supprimer", key=f"edel_{idx}", width="stretch"):
+                st.session_state.conditions.pop(idx)
+                st.session_state.editing.pop(idx, None)
+                st.rerun()
+        return
 
     if is_bulk:
         current_text = "\n".join(cond["values"])
@@ -3705,7 +3780,7 @@ def run_app(schema: dict, enrich: dict):
     for k, v in [("conditions", []), ("selected_table", default_table),
                  ("results", None), ("enrich_count", None),
                  ("last_where", ""), ("last_params", []), ("editing", {}),
-                 ("joins", [])]:
+                 ("joins", []), ("fiches_visible", 100)]:
         if k not in st.session_state:
             st.session_state[k] = v
 
@@ -4014,6 +4089,80 @@ def run_app(schema: dict, enrich: dict):
             st.session_state.pop("_pending_cond", None)
             st.rerun()
 
+    # ── Recherche par couples (col1, col2) en bulk ───────────────────────────
+    with st.expander("🔗 Recherche par couples (col1, col2)", expanded=False):
+        st.caption(
+            "Pour rechercher des couples précis (ex. nom + date d'inscription). "
+            "Une ligne par couple, séparée par une virgule."
+        )
+        pa, pb = st.columns(2)
+        with pa:
+            _pair_col1 = st.selectbox(
+                "1ère colonne", current_cols, key="pair_col1",
+                format_func=lambda c: col_labels_map.get(c, c),
+            )
+        with pb:
+            # Par défaut, la 2e colonne est différente de la 1ère
+            _other = [c for c in current_cols if c != _pair_col1]
+            _pair_col2 = st.selectbox(
+                "2ème colonne", _other, key="pair_col2",
+                format_func=lambda c: col_labels_map.get(c, c),
+            )
+        _pair_text = st.text_area(
+            "Couples",
+            key="pair_text",
+            height=140,
+            placeholder=(f"Un couple par ligne, séparé par une virgule\n"
+                         f"Exemple :\n"
+                         f"Dupont, 1985-03-15\n"
+                         f"Martin, 1990-07-22\n"
+                         f"Durand, 2001-12-04"),
+        )
+        _pair_join = (
+            st.radio("Lier au reste", ["ET", "OU"], horizontal=True,
+                     key="pair_join")
+            if st.session_state.conditions else "ET"
+        )
+        if st.button("➕ Ajouter la recherche par couples", key="add_pair",
+                     width="stretch"):
+            # Parse des lignes : virgule ou tab comme séparateur
+            lines = [ln.strip() for ln in _pair_text.splitlines() if ln.strip()]
+            _pairs = []
+            _bad   = []
+            for ln in lines:
+                parts = [p.strip() for p in re.split(r"[,\t]", ln, maxsplit=1) if p.strip()]
+                if len(parts) == 2:
+                    _pairs.append((parts[0], parts[1]))
+                else:
+                    _bad.append(ln)
+            if _bad:
+                st.warning(f"{len(_bad)} ligne(s) ignorée(s), format attendu : « v1, v2 ».")
+            if not _pairs:
+                st.warning("Aucun couple valide. Saisissez au moins une ligne « v1, v2 ».")
+            else:
+                _l1 = col_labels_map.get(_pair_col1, _pair_col1)
+                _l2 = col_labels_map.get(_pair_col2, _pair_col2)
+                _cond_pair = {
+                    "column":     f"({_pair_col1}, {_pair_col2})",   # affichage de secours
+                    "label":      f"{_l1} + {_l2}",
+                    "columns":    [_pair_col1, _pair_col2],
+                    "col_labels": [_l1, _l2],
+                    "operator":   "Couples",
+                    "pairs":      _pairs,
+                    "is_pair":    True,
+                    "is_date":    False,
+                    "is_bulk":    False,
+                }
+                if not st.session_state.conditions:
+                    _cond_pair["join_op"]   = "ET"
+                    _cond_pair["or_target"] = "leaf"
+                    st.session_state.conditions.append(_cond_pair)
+                    st.rerun()
+                else:
+                    _cond_pair["join_op"] = _pair_join
+                    st.session_state._pending_cond = _cond_pair
+                    st.rerun()
+
     st.markdown("---")
 
     # ── Arbre + requête SQL ───────────────────────────────────────────────────
@@ -4033,6 +4182,7 @@ def run_app(schema: dict, enrich: dict):
             try:
                 results = _get_db().read_sql(q, params)
                 st.session_state.results = results
+                st.session_state.fiches_visible = 100  # reset pagination
                 where, wparams = build_where(st.session_state.conditions)
                 st.session_state.last_where   = where
                 st.session_state.last_params  = wparams
@@ -4112,7 +4262,34 @@ def run_app(schema: dict, enrich: dict):
             _id_col     = _find_col(df, "id", "clients_id")
             _statut_col = _find_col(df, "statut", "clients_statut")
 
+            # ── Helper de pagination ──────────────────────────────────────────
+            def _render_load_more(total: int, scope_key: str) -> None:
+                """Affiche un bouton 'Charger les 100 suivants' + un compteur.
+                `total` est le nombre total d'éléments dans la vue courante.
+                `scope_key` rend la key du bouton unique par vue.
+                """
+                visible = min(st.session_state.fiches_visible, total)
+                st.markdown(
+                    "<div style='display:flex;justify-content:center;align-items:center;"
+                    "gap:14px;margin:18px 0 4px;color:#94a3b8;font-size:.82rem;"
+                    "font-family:JetBrains Mono,monospace;'>"
+                    f"<span>📄 Affichage <b style='color:#a5f3fc;'>{visible}</b> "
+                    f"sur <b style='color:#86efac;'>{total}</b></span>"
+                    "</div>",
+                    unsafe_allow_html=True)
+                if visible < total:
+                    remaining   = total - visible
+                    next_chunk  = min(100, remaining)
+                    if st.button(
+                        f"⬇ Charger les {next_chunk} suivantes  ({remaining} restantes)",
+                        key=f"load_more_{scope_key}",
+                        use_container_width=True,
+                    ):
+                        st.session_state.fiches_visible += 100
+                        st.rerun()
+
             # ── Toggle vue (toujours visible) ─────────────────────────────────
+            _prev_view = st.session_state.get("_tab2_view_prev", "client")
             _sel  = st.radio(
                 "Vue", ["👤  Client", "✈️  Voyage"],
                 horizontal=True,
@@ -4120,6 +4297,9 @@ def run_app(schema: dict, enrich: dict):
                 key="tab2_view_radio",
             )
             _view = "voyage" if "Voyage" in _sel else "client"
+            if _view != _prev_view:
+                st.session_state.fiches_visible = 100   # reset pagination
+                st.session_state["_tab2_view_prev"] = _view
 
             # Préchargement des compagnons (voyages de groupe)
             try:
@@ -4151,7 +4331,10 @@ def run_app(schema: dict, enrich: dict):
             # ── VUE CLIENT ────────────────────────────────────────────────────
             if _view == "client":
                 if has_nom and has_prenom and has_dest and _id_col:
-                    for client_id, group in df.groupby(_id_col, sort=False):
+                    _groups       = list(df.groupby(_id_col, sort=False))
+                    _total        = len(_groups)
+                    _limit        = st.session_state.fiches_visible
+                    for client_id, group in _groups[:_limit]:
                         if _all_pp is not None:
                             try:
                                 _cid = str(int(float(group.iloc[0].get(_id_col) or 0)))
@@ -4166,10 +4349,14 @@ def run_app(schema: dict, enrich: dict):
                             all_voyages_df=_all_voy,
                             passeports_df=_pp,
                         )
+                    _render_load_more(_total, "client_grouped")
 
                 elif has_nom and has_prenom:
+                    _total = len(df)
+                    _limit = st.session_state.fiches_visible
+                    _df_slice = df.iloc[:_limit]
                     cols_grid = st.columns(2)
-                    for i, (_, row) in enumerate(df.iterrows()):
+                    for i, (_, row) in enumerate(_df_slice.iterrows()):
                         _s_val     = row.get(_statut_col) if _statut_col else None
                         stat_color = "#4ade80" if str(_s_val or "") == "actif" else "#f87171"
                         initials   = (str(row.get("prenom", "?"))[:1] + str(row.get("nom", "?"))[:1]).upper()
@@ -4188,10 +4375,14 @@ def run_app(schema: dict, enrich: dict):
                             f"<span style='color:{stat_color};'>{row.get('statut','')}</span>"
                             f"</div></div></div></div>",
                             unsafe_allow_html=True)
+                    _render_load_more(_total, "client_simple")
 
                 elif has_dest:
+                    _total = len(df)
+                    _limit = st.session_state.fiches_visible
+                    _df_slice = df.iloc[:_limit]
                     cols_grid = st.columns(2)
-                    for i, (_, row) in enumerate(df.iterrows()):
+                    for i, (_, row) in enumerate(_df_slice.iterrows()):
                         cont     = row.get("continent", "")
                         tv       = row.get("type_voyage", "")
                         cont_col = CONT_COLORS.get(cont, "#6b7280")
@@ -4230,19 +4421,24 @@ def run_app(schema: dict, enrich: dict):
                             f"<div style='font-size:.75rem;'>{stars}</div>"
                             f"</div></div></div>",
                             unsafe_allow_html=True)
+                    _render_load_more(_total, "client_dest")
                 else:
                     st.info("Aucune vue fiche disponible pour ces colonnes.")
 
             # ── VUE VOYAGE ────────────────────────────────────────────────────
             else:
                 if has_dest:
-                    for _, vrow in df.iterrows():
+                    _total = len(df)
+                    _limit = st.session_state.fiches_visible
+                    _df_slice = df.iloc[:_limit]
+                    for _, vrow in _df_slice.iterrows():
                         render_voyage_profile_card(
                             voyage_row=vrow,
                             all_voyages_df=_all_voy,
                             col_statut_client=_statut_col or "statut",
                             show_client_info=False,
                         )
+                    _render_load_more(_total, "voyage")
                 else:
                     st.info("La vue Voyage nécessite une colonne destination.")
 
