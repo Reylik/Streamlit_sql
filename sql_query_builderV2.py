@@ -3953,12 +3953,6 @@ def run_app(schema: dict, enrich: dict):
     # Labels lisibles pour le sélecteur de colonnes
     col_labels_map = get_column_labels(schema, current_table, st.session_state.joins)
 
-    # Init du tampon de couples en attente
-    if "pending_pairs" not in st.session_state:
-        st.session_state.pending_pairs = []
-    if "pair_input_nonce" not in st.session_state:
-        st.session_state.pair_input_nonce = 0
-
     st.markdown("### ➕ Ajouter un critère")
 
     # ── Sélecteur de type de critère ─────────────────────────────────────────
@@ -4040,77 +4034,79 @@ def run_app(schema: dict, enrich: dict):
                                  key="new_join_pair", label_visibility="collapsed")
                         if st.session_state.conditions else "ET")
 
-        # ── Saisie d'un couple : 2 champs côte-à-côte + bouton "ajouter" ──────
+        # ── Saisie en bulk : 2 textareas côte-à-côte ─────────────────────────
         _label1 = col_labels_map.get(_pair_col1, _pair_col1)
         _label2 = col_labels_map.get(_pair_col2, _pair_col2)
-        # nonce permet de "vider" les inputs après ajout en changeant la clé
-        _nonce = st.session_state.pair_input_nonce
-        ia, ib, iadd = st.columns([2.5, 2.5, 1])
-        with ia:
-            _v1 = st.text_input(
-                f"Valeur pour {_label1}",
-                key=f"pair_v1_{_nonce}",
-                placeholder=_label1,
-            )
-        with ib:
-            # Si la 2e colonne est une date, proposer un date_input
-            if is_date_col(_pair_col2):
-                _v2_date = st.date_input(
-                    f"Valeur pour {_label2}",
-                    key=f"pair_v2_{_nonce}",
-                )
-                _v2 = _v2_date.strftime("%Y-%m-%d") if _v2_date else ""
-            else:
-                _v2 = st.text_input(
-                    f"Valeur pour {_label2}",
-                    key=f"pair_v2_{_nonce}",
-                    placeholder=_label2,
-                )
-        with iadd:
-            st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
-            if st.button("➕ Au lot", key="add_pair_to_list", width="stretch",
-                         help="Ajouter ce couple à la liste"):
-                if _v1.strip() and _v2.strip():
-                    st.session_state.pending_pairs.append((_v1.strip(), _v2.strip()))
-                    st.session_state.pair_input_nonce += 1  # vide les inputs au rerun
-                    st.rerun()
-                else:
-                    st.warning("Remplissez les deux champs.")
 
-        # ── Affichage des couples accumulés ──────────────────────────────────
-        if st.session_state.pending_pairs:
-            st.markdown(
-                "<div style='color:#94a3b8;font-size:.72rem;text-transform:uppercase;"
-                "letter-spacing:1px;font-family:JetBrains Mono,monospace;margin:10px 0 6px;'>"
-                f"📋 {len(st.session_state.pending_pairs)} couple(s) en attente</div>",
-                unsafe_allow_html=True,
+        st.caption(
+            "💡 Collez vos données : une valeur par ligne dans chaque zone. "
+            "Les couples se forment par appariement positionnel (ligne N + ligne N)."
+        )
+
+        ta1, ta2 = st.columns(2)
+        with ta1:
+            _pair_text1 = st.text_area(
+                f"Valeurs pour « {_label1} »",
+                key="pair_text1",
+                height=180,
+                placeholder=f"Une valeur de {_label1} par ligne\nDupont\nMartin\nDurand",
             )
-            for _pi, (_pv1, _pv2) in enumerate(st.session_state.pending_pairs):
-                rc1, rc2 = st.columns([10, 1])
-                with rc1:
-                    st.markdown(
-                        f"<div style='background:#13151d;border:1px solid #1e2130;"
-                        f"border-radius:8px;padding:6px 12px;margin-bottom:4px;"
-                        f"font-family:JetBrains Mono,monospace;font-size:.78rem;'>"
-                        f"<span style='color:#a5f3fc;'>{_label1}</span> = "
-                        f"<span style='color:#86efac;'>«{_pv1}»</span> "
-                        f"<span style='color:#fbbf24;'>ET</span> "
-                        f"<span style='color:#a5f3fc;'>{_label2}</span> = "
-                        f"<span style='color:#86efac;'>«{_pv2}»</span></div>",
-                        unsafe_allow_html=True,
-                    )
-                with rc2:
-                    if st.button("🗑", key=f"del_pending_pair_{_pi}",
-                                 help="Retirer ce couple"):
-                        st.session_state.pending_pairs.pop(_pi)
-                        st.rerun()
-        else:
+        with ta2:
+            _pair_text2 = st.text_area(
+                f"Valeurs pour « {_label2} »",
+                key="pair_text2",
+                height=180,
+                placeholder=(f"Une valeur de {_label2} par ligne\n"
+                             f"1985-03-15\n1990-07-22\n2001-12-04"
+                             if is_date_col(_pair_col2)
+                             else f"Une valeur de {_label2} par ligne"),
+            )
+
+        # ── Aperçu en temps réel : nombre de lignes + alerte si déséquilibre ──
+        _lines1 = [ln.strip() for ln in _pair_text1.splitlines() if ln.strip()]
+        _lines2 = [ln.strip() for ln in _pair_text2.splitlines() if ln.strip()]
+        _n1, _n2 = len(_lines1), len(_lines2)
+
+        if _n1 == 0 and _n2 == 0:
             st.markdown(
                 "<div style='color:#475569;font-size:.78rem;font-style:italic;"
-                "font-family:JetBrains Mono,monospace;margin:10px 0 6px;'>"
-                "Aucun couple en attente. Saisissez deux valeurs et cliquez sur « Au lot ».</div>",
+                "font-family:JetBrains Mono,monospace;margin:6px 0;'>"
+                "En attente de valeurs dans les deux zones.</div>",
                 unsafe_allow_html=True,
             )
+        elif _n1 != _n2:
+            # Alerte : déséquilibre
+            st.markdown(
+                f"<div style='background:#3a1a1a;border:1px solid #ef4444;"
+                f"border-left:3px solid #ef4444;border-radius:8px;"
+                f"padding:10px 14px;margin:6px 0;"
+                f"font-family:JetBrains Mono,monospace;font-size:.8rem;color:#fca5a5;'>"
+                f"⚠️ <b>Déséquilibre détecté</b> &nbsp;·&nbsp; "
+                f"« {_label1} » : <b style='color:#fbbf24;'>{_n1}</b> valeur(s) &nbsp;·&nbsp; "
+                f"« {_label2} » : <b style='color:#fbbf24;'>{_n2}</b> valeur(s)<br>"
+                f"<span style='color:#fca5a5;opacity:.85;'>"
+                f"Les deux zones doivent contenir le même nombre de lignes "
+                f"non-vides pour former des couples valides.</span></div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            # Tout est OK : aperçu vert
+            _preview_html = (
+                f"<div style='background:#0f1e14;border:1px solid #14532d;"
+                f"border-left:3px solid #4ade80;border-radius:8px;"
+                f"padding:8px 14px;margin:6px 0;"
+                f"font-family:JetBrains Mono,monospace;font-size:.78rem;color:#86efac;'>"
+                f"✓ <b>{_n1} couple{'s' if _n1 > 1 else ''} prêt{'s' if _n1 > 1 else ''}</b> "
+                f"à être ajouté{'s' if _n1 > 1 else ''}"
+            )
+            # Aperçu des 3 premiers couples
+            if _n1 > 0:
+                _show = list(zip(_lines1, _lines2))[:3]
+                _items = " · ".join(f"«{v1}»+«{v2}»" for v1, v2 in _show)
+                _suffix = f" +{_n1 - 3} autres" if _n1 > 3 else ""
+                _preview_html += f"&nbsp;&nbsp;<span style='color:#94a3b8;'>[{_items}{_suffix}]</span>"
+            _preview_html += "</div>"
+            st.markdown(_preview_html, unsafe_allow_html=True)
 
     btn_a, btn_b = st.columns([3, 1])
     with btn_a:
@@ -4119,9 +4115,24 @@ def run_app(schema: dict, enrich: dict):
 
             # ── Mode Couples ─────────────────────────────────────────────────
             if is_pair_mode:
-                if not st.session_state.pending_pairs:
-                    st.warning("Ajoutez au moins un couple à la liste avant de valider.")
+                # Re-parser ici (au cas où la dernière saisie n'a pas encore rerun)
+                _raw1 = st.session_state.get("pair_text1", "")
+                _raw2 = st.session_state.get("pair_text2", "")
+                _l1lines = [ln.strip() for ln in _raw1.splitlines() if ln.strip()]
+                _l2lines = [ln.strip() for ln in _raw2.splitlines() if ln.strip()]
+
+                if not _l1lines and not _l2lines:
+                    st.warning("Saisissez des valeurs dans les deux zones.")
+                elif len(_l1lines) != len(_l2lines):
+                    st.warning(
+                        f"Déséquilibre : « {col_labels_map.get(_pair_col1, _pair_col1)} » "
+                        f"contient {len(_l1lines)} valeur(s), "
+                        f"« {col_labels_map.get(_pair_col2, _pair_col2)} » "
+                        f"en contient {len(_l2lines)}. "
+                        f"Les deux zones doivent contenir le même nombre de lignes."
+                    )
                 else:
+                    _pairs_final = list(zip(_l1lines, _l2lines))
                     _l1 = col_labels_map.get(_pair_col1, _pair_col1)
                     _l2 = col_labels_map.get(_pair_col2, _pair_col2)
                     _cond = {
@@ -4130,7 +4141,7 @@ def run_app(schema: dict, enrich: dict):
                         "columns":    [_pair_col1, _pair_col2],
                         "col_labels": [_l1, _l2],
                         "operator":   "Couples",
-                        "pairs":      list(st.session_state.pending_pairs),
+                        "pairs":      _pairs_final,
                         "is_pair":    True,
                         "is_date":    False,
                         "is_bulk":    False,
@@ -4213,17 +4224,20 @@ def run_app(schema: dict, enrich: dict):
                 else:
                     _cond["join_op"] = new_join
                     st.session_state._pending_cond = _cond
-                # Vider le tampon de couples après ajout réussi
+                # Vider les zones de couples après ajout réussi
                 if is_pair_mode:
-                    st.session_state.pending_pairs = []
-                    st.session_state.pair_input_nonce += 1
+                    st.session_state["pair_text1"] = ""
+                    st.session_state["pair_text2"] = ""
                 st.rerun()
     with btn_b:
         if st.button("🗑 Effacer", width="stretch"):
             st.session_state.conditions    = []
             st.session_state.results       = None
             st.session_state.enrich_count  = None
-            st.session_state.pending_pairs = []
+            if "pair_text1" in st.session_state:
+                st.session_state["pair_text1"] = ""
+            if "pair_text2" in st.session_state:
+                st.session_state["pair_text2"] = ""
             st.session_state.pop("_pending_cond", None)
             st.rerun()
 
