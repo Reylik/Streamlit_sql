@@ -7,9 +7,9 @@ import uuid
 import json
 import os
 from datetime import datetime
+from streamlit.runtime.scriptrunner import add_script_run_ctx,get_script_run_ctx
+from subprocess import Popen
 
-st.set_page_config(page_title="SQL Query Builder", page_icon="🔍",
-                   layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
