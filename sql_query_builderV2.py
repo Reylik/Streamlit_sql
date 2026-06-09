@@ -2404,7 +2404,8 @@ def render_client_enrichment_block(client_id, snapshot: dict, accent_color: str 
             help="Déclenche un appel API externe pour récupérer score, géolocalisation, etc.",
         ):
             ensure_enrichment_started(client_id, snapshot)
-            st.rerun()  # rerun du fragment seul → passe au spinner immédiatement
+            # Rerun scope=fragment : ne recharge que ce bloc, pas toute la page
+            st.rerun(scope="fragment")
         return
 
     # ── État LOADING : spinner ────────────────────────────────────────────────
@@ -2444,7 +2445,7 @@ def render_client_enrichment_block(client_id, snapshot: dict, accent_color: str 
                 # Effacer l'entrée du store pour repartir de zéro
                 with _enrich_lock:
                     _enrich_store.pop(client_id, None)
-                st.rerun()
+                st.rerun(scope="fragment")
         return
 
     # ── État DONE : affichage du résultat sous forme de chips ────────────────
