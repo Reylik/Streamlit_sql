@@ -2358,54 +2358,101 @@ def ensure_enrichment_started(client_id, snapshot: dict) -> None:
     _enrich_executor.submit(_enrich_worker, client_id, snapshot)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# BATCH SÉQUENTIEL : un seul thread enrichit toutes les fiches l'une après l'autre
+# ──────────────────────────────────────────────────────────────────────────────
+_batch_state: dict = {
+    "running": False,   # True tant qu'un thread batch tourne
+    "total":   0,
+    "done":    0,
+}
+_batch_lock = threading.Lock()
+
+
+def get_batch_state() -> dict:
+    """Lecture thread-safe de l'état du batch global."""
+    with _batch_lock:
+        return dict(_batch_state)
+
+
+def _batch_enrich_worker(snapshots: list) -> None:
+    """
+    Tourne dans UN seul thread. Boucle sur les snapshots et appelle l'API
+    en série (1 appel à la fois). Chaque client est ajouté au store individuel,
+    donc les cards (qui pollent via leur fragment) voient progressivement les
+    résultats.
+    """
+    try:
+        for (cid, snap) in snapshots:
+            # Skip si déjà traité (idempotence)
+            with _enrich_lock:
+                existing = _enrich_store.get(cid)
+                if existing and existing.get("status") in ("loading", "done"):
+                    with _batch_lock:
+                        _batch_state["done"] += 1
+                    continue
+                # Marquer en loading pour que la card affiche le spinner
+                _enrich_store[cid] = {"status": "loading"}
+
+            # Appel API (hors verrou pour ne pas bloquer les autres threads/lectures)
+            try:
+                data = _do_client_enrichment(cid, snap)
+                with _enrich_lock:
+                    _enrich_store[cid] = {"status": "done", "data": data}
+            except Exception as exc:
+                with _enrich_lock:
+                    _enrich_store[cid] = {"status": "error", "error": str(exc)}
+
+            with _batch_lock:
+                _batch_state["done"] += 1
+    finally:
+        with _batch_lock:
+            _batch_state["running"] = False
+
+
+def start_batch_enrichment(snapshots: list) -> bool:
+    """
+    Lance un batch séquentiel. Si un batch est déjà en cours, ne fait rien
+    et renvoie False. Sinon True.
+    """
+    with _batch_lock:
+        if _batch_state["running"]:
+            return False
+        _batch_state["running"] = True
+        _batch_state["total"]   = len(snapshots)
+        _batch_state["done"]    = 0
+
+    # Thread daemon, séparé du pool (un seul thread = série stricte)
+    t = threading.Thread(
+        target=_batch_enrich_worker,
+        args=(snapshots,),
+        daemon=True,
+        name="batch-enrich-sequential",
+    )
+    t.start()
+    return True
+
+
 @st.fragment(run_every="0.8s")
 def render_client_enrichment_block(client_id, snapshot: dict, accent_color: str = "#a78bfa"):
     """
     Bloc d'enrichissement async, intégrable dans n'importe quelle carte.
 
-    Comportement :
-    • État initial (idle)   → affiche un bouton « Lancer l'enrichissement API »
-    • Au clic du bouton    → lance le thread, passe en loading
+    Comportement (déclenchement géré par un bouton global, pas individuel) :
+    • État initial (idle)   → n'affiche rien (le bouton global n'a pas été cliqué)
     • Pendant le chargement → spinner animé, le fragment poll toutes les 0.8s
-    • Une fois terminé     → affiche les valeurs renvoyées par l'API (chips)
-    • En cas d'erreur      → bandeau rouge avec message
+    • Une fois terminé      → affiche les valeurs renvoyées par l'API (chips)
+    • En cas d'erreur       → bandeau rouge avec message
 
     Le polling continue après le done mais ne fait qu'une lecture dict — coût
-    négligeable. Si vous voulez l'arrêter complètement, retirez `run_every`.
+    négligeable.
     """
+    # snapshot n'est plus utilisé ici (pas de déclenchement individuel),
+    # on le garde dans la signature pour compatibilité.
     state = get_enrichment_state(client_id)
 
-    # ── État INITIAL : bouton de déclenchement ───────────────────────────────
+    # ── État INITIAL (idle) : ne rien afficher ───────────────────────────────
     if state["status"] == "idle":
-        _marker = f"enrich-trigger-{client_id}"
-        st.markdown(
-            f'<div id="{_marker}"></div><style>'
-            f'div.element-container:has(#{_marker})+div.element-container button {{'
-            f'background:transparent !important; color:#cbd5e1 !important;'
-            f'border:1px dashed {accent_color} !important; border-radius:8px !important;'
-            f'font-family:"JetBrains Mono",monospace !important; font-size:.78rem !important;'
-            f'opacity:.75 !important; padding:8px 14px !important; min-height:0 !important;'
-            f'margin:6px 0 !important; transition: all .15s ease !important;'
-            f'text-align:left !important; justify-content:flex-start !important;'
-            f'}}'
-            f'div.element-container:has(#{_marker})+div.element-container button p {{'
-            f'text-align:left !important;'
-            f'}}'
-            f'div.element-container:has(#{_marker})+div.element-container button:hover {{'
-            f'opacity:1 !important; background:{accent_color}1a !important;'
-            f'box-shadow:0 0 12px {accent_color}66 !important;'
-            f'}}</style>',
-            unsafe_allow_html=True,
-        )
-        if st.button(
-            "✨ Lancer l'enrichissement API",
-            key=f"_enrich_btn_{client_id}",
-            use_container_width=True,
-            help="Déclenche un appel API externe pour récupérer score, géolocalisation, etc.",
-        ):
-            ensure_enrichment_started(client_id, snapshot)
-            # Rerun scope=fragment : ne recharge que ce bloc, pas toute la page
-            st.rerun(scope="fragment")
         return
 
     # ── État LOADING : spinner ────────────────────────────────────────────────
@@ -2425,27 +2472,18 @@ def render_client_enrichment_block(client_id, snapshot: dict, accent_color: str 
         )
         return
 
-    # ── État ERROR : bandeau rouge + bouton réessayer ─────────────────────────
+    # ── État ERROR : bandeau rouge ────────────────────────────────────────────
     if state["status"] == "error":
-        ec1, ec2 = st.columns([4, 1])
-        with ec1:
-            st.markdown(
-                f"<div style='background:#1a0f0f;border:1px solid #ef4444;"
-                f"border-left:3px solid #ef4444;border-radius:8px;"
-                f"padding:8px 14px;margin:6px 0;"
-                f"font-family:JetBrains Mono,monospace;font-size:.78rem;color:#fca5a5;'>"
-                f"⚠️ Enrichissement indisponible "
-                f"<span style='opacity:.7;'>({state.get('error','erreur inconnue')})</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-        with ec2:
-            if st.button("↻ Réessayer", key=f"_enrich_retry_{client_id}",
-                         use_container_width=True):
-                # Effacer l'entrée du store pour repartir de zéro
-                with _enrich_lock:
-                    _enrich_store.pop(client_id, None)
-                st.rerun(scope="fragment")
+        st.markdown(
+            f"<div style='background:#1a0f0f;border:1px solid #ef4444;"
+            f"border-left:3px solid #ef4444;border-radius:8px;"
+            f"padding:8px 14px;margin:6px 0;"
+            f"font-family:JetBrains Mono,monospace;font-size:.78rem;color:#fca5a5;'>"
+            f"⚠️ Enrichissement indisponible "
+            f"<span style='opacity:.7;'>({state.get('error','erreur inconnue')})</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
         return
 
     # ── État DONE : affichage du résultat sous forme de chips ────────────────
@@ -4635,6 +4673,103 @@ def run_app(schema: dict, enrich: dict):
                 except Exception:
                     _all_pp = None
 
+            # ── BOUTON GLOBAL D'ENRICHISSEMENT (vue Client uniquement) ────────
+            if _view == "client" and _id_col and _id_col in df.columns:
+                # Collecte des client_ids uniques visibles (selon la pagination)
+                _limit_for_enrich = st.session_state.fiches_visible
+                # Pour la vue groupée, on prend les N premiers groupes ; pour la
+                # vue simple, on prend les N premières lignes uniques par id
+                _unique_df = (df.drop_duplicates(subset=[_id_col])
+                                .iloc[:_limit_for_enrich])
+
+                _enrich_snapshots = []
+                for _, _r in _unique_df.iterrows():
+                    _cid_raw = _r.get(_id_col)
+                    if _cid_raw is None:
+                        continue
+                    try:
+                        _cid_key = int(float(_cid_raw))
+                    except (TypeError, ValueError):
+                        _cid_key = str(_cid_raw)
+                    _enrich_snapshots.append((_cid_key, {
+                        "id":     _cid_key,
+                        "nom":    str(_r.get("nom", "")),
+                        "prenom": str(_r.get("prenom", "")),
+                        "email":  str(_r.get("email", "")),
+                        "ville":  str(_r.get("ville", "")),
+                    }))
+
+                # Combien sont à enrichir (= pas encore dans le store) ?
+                with _enrich_lock:
+                    _todo = sum(1 for cid, _ in _enrich_snapshots
+                                if cid not in _enrich_store)
+                _batch = get_batch_state()
+
+                # ── Barre d'enrichissement (bouton + progression live) ──────
+                @st.fragment(run_every="0.8s" if _batch["running"] else None)
+                def _render_global_enrich_bar(snapshots=_enrich_snapshots, todo=_todo):
+                    bstate = get_batch_state()
+                    if bstate["running"]:
+                        # Progression live
+                        done  = bstate["done"]
+                        total = bstate["total"]
+                        pct   = int(100 * done / total) if total else 100
+                        st.markdown(
+                            f"<div style='background:linear-gradient(135deg,#0f1118,#13151d);"
+                            f"border:1px solid #2a2d3e;border-left:3px solid #a78bfa;"
+                            f"border-radius:10px;padding:10px 14px;margin:6px 0 12px;"
+                            f"font-family:JetBrains Mono,monospace;'>"
+                            f"<div style='display:flex;justify-content:space-between;"
+                            f"align-items:center;gap:10px;font-size:.78rem;color:#94a3b8;'>"
+                            f"<span>✨ Enrichissement en cours… "
+                            f"<b style='color:#a5f3fc;'>{done}</b>"
+                            f"<span style='opacity:.6;'> / {total}</span></span>"
+                            f"<span style='color:#86efac;'>{pct} %</span></div>"
+                            f"<div style='margin-top:6px;background:#1e2130;height:4px;"
+                            f"border-radius:2px;overflow:hidden;'>"
+                            f"<div style='width:{pct}%;height:100%;"
+                            f"background:linear-gradient(90deg,#a78bfa,#86efac);"
+                            f"transition:width .4s ease;'></div></div></div>",
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        # Bouton de déclenchement
+                        if todo == 0:
+                            st.markdown(
+                                "<div style='color:#475569;font-size:.78rem;font-style:italic;"
+                                "font-family:JetBrains Mono,monospace;margin:6px 0 12px;'>"
+                                "✓ Toutes les fiches visibles sont déjà enrichies.</div>",
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            _marker = "global-enrich-trigger"
+                            st.markdown(
+                                f'<div id="{_marker}"></div><style>'
+                                f'div.element-container:has(#{_marker})+div.element-container button {{'
+                                f'background:linear-gradient(135deg,#a78bfa22,#86efac22) !important;'
+                                f'color:#e8eaf0 !important;'
+                                f'border:1px solid #a78bfa !important; border-radius:8px !important;'
+                                f'font-family:"JetBrains Mono",monospace !important;'
+                                f'font-size:.82rem !important; font-weight:600 !important;'
+                                f'padding:10px 18px !important;'
+                                f'}}'
+                                f'div.element-container:has(#{_marker})+div.element-container button:hover {{'
+                                f'background:linear-gradient(135deg,#a78bfa44,#86efac44) !important;'
+                                f'box-shadow:0 0 16px #a78bfa66 !important;'
+                                f'}}</style>',
+                                unsafe_allow_html=True,
+                            )
+                            if st.button(
+                                f"✨ Enrichir toutes les fiches  ·  {todo} à traiter",
+                                key="global_enrich_btn",
+                                use_container_width=True,
+                                help="Lance les appels API en série, 1 fiche à la fois",
+                            ):
+                                if start_batch_enrichment(snapshots):
+                                    st.rerun(scope="fragment")
+
+                _render_global_enrich_bar()
+
             # ── VUE CLIENT ────────────────────────────────────────────────────
             if _view == "client":
                 if has_nom and has_prenom and has_dest and _id_col:
@@ -4663,6 +4798,7 @@ def run_app(schema: dict, enrich: dict):
                     _limit = st.session_state.fiches_visible
                     _df_slice = df.iloc[:_limit]
                     cols_grid = st.columns(2)
+                    _seen_cids = set()   # pour ne rendre le bloc enrich qu'une fois par client
                     for i, (_, row) in enumerate(_df_slice.iterrows()):
                         _s_val     = row.get(_statut_col) if _statut_col else None
                         stat_color = "#4ade80" if str(_s_val or "") == "actif" else "#f87171"
@@ -4685,13 +4821,17 @@ def run_app(schema: dict, enrich: dict):
                                 f"</div></div></div></div>",
                                 unsafe_allow_html=True)
 
-                            # ── Bloc enrichissement API ─────────────────────
+                            # ── Bloc enrichissement API (1 fois max par client) ──
                             _cid_raw = row.get(_id_col) if _id_col else row.get("id")
+                            _cid_key = None
                             if _cid_raw is not None and str(_cid_raw) not in ("", "—", "nan"):
                                 try:
                                     _cid_key = int(float(_cid_raw))
                                 except (TypeError, ValueError):
                                     _cid_key = str(_cid_raw)
+
+                            if _cid_key is not None and _cid_key not in _seen_cids:
+                                _seen_cids.add(_cid_key)
                                 _snapshot = {
                                     "id":     _cid_key,
                                     "nom":    str(row.get("nom", "")),
