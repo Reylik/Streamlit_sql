@@ -2362,14 +2362,52 @@ def ensure_enrichment_started(client_id, snapshot: dict) -> None:
 def render_client_enrichment_block(client_id, snapshot: dict, accent_color: str = "#a78bfa"):
     """
     Bloc d'enrichissement async, intégrable dans n'importe quelle carte.
-    Se ré-exécute toutes les 0.8s tant que le résultat n'est pas dispo.
 
-    Une fois `done`, le fragment continue de s'exécuter en boucle mais ne fait
-    plus qu'une lecture de dict + un st.markdown — coût négligeable.
+    Comportement :
+    • État initial (idle)   → affiche un bouton « Lancer l'enrichissement API »
+    • Au clic du bouton    → lance le thread, passe en loading
+    • Pendant le chargement → spinner animé, le fragment poll toutes les 0.8s
+    • Une fois terminé     → affiche les valeurs renvoyées par l'API (chips)
+    • En cas d'erreur      → bandeau rouge avec message
+
+    Le polling continue après le done mais ne fait qu'une lecture dict — coût
+    négligeable. Si vous voulez l'arrêter complètement, retirez `run_every`.
     """
-    ensure_enrichment_started(client_id, snapshot)
     state = get_enrichment_state(client_id)
 
+    # ── État INITIAL : bouton de déclenchement ───────────────────────────────
+    if state["status"] == "idle":
+        _marker = f"enrich-trigger-{client_id}"
+        st.markdown(
+            f'<div id="{_marker}"></div><style>'
+            f'div.element-container:has(#{_marker})+div.element-container button {{'
+            f'background:transparent !important; color:#cbd5e1 !important;'
+            f'border:1px dashed {accent_color} !important; border-radius:8px !important;'
+            f'font-family:"JetBrains Mono",monospace !important; font-size:.78rem !important;'
+            f'opacity:.75 !important; padding:8px 14px !important; min-height:0 !important;'
+            f'margin:6px 0 !important; transition: all .15s ease !important;'
+            f'text-align:left !important; justify-content:flex-start !important;'
+            f'}}'
+            f'div.element-container:has(#{_marker})+div.element-container button p {{'
+            f'text-align:left !important;'
+            f'}}'
+            f'div.element-container:has(#{_marker})+div.element-container button:hover {{'
+            f'opacity:1 !important; background:{accent_color}1a !important;'
+            f'box-shadow:0 0 12px {accent_color}66 !important;'
+            f'}}</style>',
+            unsafe_allow_html=True,
+        )
+        if st.button(
+            "✨ Lancer l'enrichissement API",
+            key=f"_enrich_btn_{client_id}",
+            use_container_width=True,
+            help="Déclenche un appel API externe pour récupérer score, géolocalisation, etc.",
+        ):
+            ensure_enrichment_started(client_id, snapshot)
+            st.rerun()  # rerun du fragment seul → passe au spinner immédiatement
+        return
+
+    # ── État LOADING : spinner ────────────────────────────────────────────────
     if state["status"] == "loading":
         st.markdown(
             f"<div style='background:#0f1118;border:1px solid #1e2130;"
@@ -2386,23 +2424,32 @@ def render_client_enrichment_block(client_id, snapshot: dict, accent_color: str 
         )
         return
 
+    # ── État ERROR : bandeau rouge + bouton réessayer ─────────────────────────
     if state["status"] == "error":
-        st.markdown(
-            f"<div style='background:#1a0f0f;border:1px solid #ef4444;"
-            f"border-left:3px solid #ef4444;border-radius:8px;"
-            f"padding:8px 14px;margin:6px 0;"
-            f"font-family:JetBrains Mono,monospace;font-size:.78rem;color:#fca5a5;'>"
-            f"⚠️ Enrichissement indisponible "
-            f"<span style='opacity:.7;'>({state.get('error','erreur inconnue')})</span>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+        ec1, ec2 = st.columns([4, 1])
+        with ec1:
+            st.markdown(
+                f"<div style='background:#1a0f0f;border:1px solid #ef4444;"
+                f"border-left:3px solid #ef4444;border-radius:8px;"
+                f"padding:8px 14px;margin:6px 0;"
+                f"font-family:JetBrains Mono,monospace;font-size:.78rem;color:#fca5a5;'>"
+                f"⚠️ Enrichissement indisponible "
+                f"<span style='opacity:.7;'>({state.get('error','erreur inconnue')})</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        with ec2:
+            if st.button("↻ Réessayer", key=f"_enrich_retry_{client_id}",
+                         use_container_width=True):
+                # Effacer l'entrée du store pour repartir de zéro
+                with _enrich_lock:
+                    _enrich_store.pop(client_id, None)
+                st.rerun()
         return
 
-    # ── status == "done" : on affiche le résultat ───────────────────────
+    # ── État DONE : affichage du résultat sous forme de chips ────────────────
     data = state.get("data") or {}
 
-    # Helpers pour le rendu — tolérants aux clés manquantes
     def chip(label, value, color="#a5f3fc"):
         if value is None or value == "":
             return ""
