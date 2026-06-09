@@ -7,9 +7,9 @@ import uuid
 import json
 import os
 from datetime import datetime
-from streamlit.runtime.scriptrunner import add_script_run_ctx,get_script_run_ctx
-from subprocess import Popen
 
+st.set_page_config(page_title="SQL Query Builder", page_icon="🔍",
+                   layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
@@ -2284,6 +2284,164 @@ def _safe_get(data, col, default="—"):
     return val
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ENRICHISSEMENT ASYNC DES FICHES CLIENT
+# ──────────────────────────────────────────────────────────────────────────────
+# Pattern : un thread fait l'appel API et écrit dans un store global thread-safe.
+# Un st.fragment(run_every="1s") sur la carte lit le store et bascule du spinner
+# au résultat dès que celui-ci est disponible — sans recharger toute la page.
+# ══════════════════════════════════════════════════════════════════════════════
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+# Store global : { client_id -> {"status": "loading|done|error", "data": ..., "error": ...} }
+_enrich_store: dict = {}
+_enrich_lock                  = threading.Lock()
+_enrich_executor              = ThreadPoolExecutor(
+    max_workers=8, thread_name_prefix="client-enrich"
+)
+
+
+def _do_client_enrichment(client_id, snapshot: dict) -> dict:
+    """
+    ⚠️  À REMPLACER par votre vrai appel API.
+
+    `snapshot` est un dictionnaire avec quelques infos du client (email, nom,
+    pays, etc.) que vous pouvez utiliser pour appeler votre API externe.
+
+    Doit renvoyer un dict avec les valeurs enrichies. La fiche affichera ce
+    qui s'y trouve. Vous pouvez ajouter ou retirer des clés librement —
+    `render_client_enrichment_block` ci-dessous est tolérant aux clés absentes.
+    """
+    # ── Exemple : simulation d'un appel API qui prend 1 à 3 secondes ──
+    import time, random
+    time.sleep(random.uniform(1.0, 3.0))
+    # Pour tester un échec aléatoire, dé-commenter :
+    # if random.random() < 0.1: raise RuntimeError("API timeout")
+
+    # Exemples de valeurs renvoyées — adaptez selon votre API
+    return {
+        "risk_score":     random.randint(0, 100),
+        "geo_country":    random.choice(["FR", "BE", "CH", "LU", "CA"]),
+        "email_verified": random.choice([True, False]),
+        "last_login":     f"il y a {random.randint(1, 90)} j",
+    }
+
+
+def _enrich_worker(client_id, snapshot: dict) -> None:
+    """Tourne dans le pool de threads. Catch tout, écrit dans le store global."""
+    try:
+        data = _do_client_enrichment(client_id, snapshot)
+        with _enrich_lock:
+            _enrich_store[client_id] = {"status": "done", "data": data}
+    except Exception as exc:
+        with _enrich_lock:
+            _enrich_store[client_id] = {"status": "error", "error": str(exc)}
+
+
+def get_enrichment_state(client_id) -> dict:
+    """Lecture thread-safe de l'état d'enrichissement d'un client."""
+    with _enrich_lock:
+        return dict(_enrich_store.get(client_id, {"status": "idle"}))
+
+
+def ensure_enrichment_started(client_id, snapshot: dict) -> None:
+    """
+    Lance l'enrichissement s'il n'a pas déjà été démarré pour ce client.
+    Idempotent : peut être appelé à chaque rerun sans risque.
+    """
+    with _enrich_lock:
+        if client_id in _enrich_store:
+            return  # déjà loading/done/error, on ne relance pas
+        _enrich_store[client_id] = {"status": "loading"}
+    # Hors du verrou : on submit sans bloquer
+    _enrich_executor.submit(_enrich_worker, client_id, snapshot)
+
+
+@st.fragment(run_every="0.8s")
+def render_client_enrichment_block(client_id, snapshot: dict, accent_color: str = "#a78bfa"):
+    """
+    Bloc d'enrichissement async, intégrable dans n'importe quelle carte.
+    Se ré-exécute toutes les 0.8s tant que le résultat n'est pas dispo.
+
+    Une fois `done`, le fragment continue de s'exécuter en boucle mais ne fait
+    plus qu'une lecture de dict + un st.markdown — coût négligeable.
+    """
+    ensure_enrichment_started(client_id, snapshot)
+    state = get_enrichment_state(client_id)
+
+    if state["status"] == "loading":
+        st.markdown(
+            f"<div style='background:#0f1118;border:1px solid #1e2130;"
+            f"border-left:3px solid {accent_color};border-radius:8px;"
+            f"padding:8px 14px;margin:6px 0;display:flex;align-items:center;gap:10px;"
+            f"font-family:JetBrains Mono,monospace;font-size:.78rem;color:#94a3b8;'>"
+            f"<span class='spinner' style='display:inline-block;width:12px;height:12px;"
+            f"border:2px solid #2a2d3e;border-top-color:{accent_color};border-radius:50%;"
+            f"animation:spin 0.8s linear infinite;'></span>"
+            f"<span>Enrichissement en cours…</span>"
+            f"</div>"
+            f"<style>@keyframes spin{{to{{transform:rotate(360deg);}}}}</style>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    if state["status"] == "error":
+        st.markdown(
+            f"<div style='background:#1a0f0f;border:1px solid #ef4444;"
+            f"border-left:3px solid #ef4444;border-radius:8px;"
+            f"padding:8px 14px;margin:6px 0;"
+            f"font-family:JetBrains Mono,monospace;font-size:.78rem;color:#fca5a5;'>"
+            f"⚠️ Enrichissement indisponible "
+            f"<span style='opacity:.7;'>({state.get('error','erreur inconnue')})</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    # ── status == "done" : on affiche le résultat ───────────────────────
+    data = state.get("data") or {}
+
+    # Helpers pour le rendu — tolérants aux clés manquantes
+    def chip(label, value, color="#a5f3fc"):
+        if value is None or value == "":
+            return ""
+        return (
+            f"<div style='background:#13151d;border:1px solid #1e2130;"
+            f"border-radius:14px;padding:3px 11px;display:inline-flex;align-items:center;"
+            f"gap:6px;font-family:JetBrains Mono,monospace;font-size:.72rem;'>"
+            f"<span style='color:#64748b;'>{label}</span>"
+            f"<span style='color:{color};font-weight:600;'>{value}</span></div>"
+        )
+
+    score = data.get("risk_score")
+    score_color = (
+        "#86efac" if isinstance(score, (int, float)) and score < 30 else
+        "#fbbf24" if isinstance(score, (int, float)) and score < 70 else
+        "#f87171" if score is not None else "#a5f3fc"
+    )
+
+    chips_html = " ".join(filter(None, [
+        chip("score",  f"{score}/100" if score is not None else None, score_color),
+        chip("pays",   data.get("geo_country")),
+        chip("email",  "✓ vérifié" if data.get("email_verified") else "✗ non vérifié",
+             "#86efac" if data.get("email_verified") else "#f87171"),
+        chip("dernier login", data.get("last_login"), "#cbd5e1"),
+    ]))
+
+    st.markdown(
+        f"<div style='background:linear-gradient(135deg,#0f1118 0%,#13151d 100%);"
+        f"border:1px solid #1e2130;border-left:3px solid {accent_color};"
+        f"border-radius:8px;padding:10px 14px;margin:6px 0;'>"
+        f"<div style='color:#94a3b8;font-size:.68rem;text-transform:uppercase;"
+        f"letter-spacing:1.2px;font-family:JetBrains Mono,monospace;margin-bottom:6px;'>"
+        f"✨ Enrichissement API</div>"
+        f"<div style='display:flex;flex-wrap:wrap;gap:6px;'>{chips_html}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_client_profile_card(
     client_row,
     voyages_df=None,
@@ -2454,6 +2612,23 @@ def render_client_profile_card(
         f"{idpro_html}"
         f"</div>",
         unsafe_allow_html=True)
+
+    # ── Enrichissement async (appel API en arrière-plan) ──────────────────────
+    _client_id = _safe_get(client_row, "id", None)
+    if _client_id is not None and _client_id != "—":
+        try:
+            _cid_key = int(float(_client_id))  # clé hashable
+        except (TypeError, ValueError):
+            _cid_key = str(_client_id)
+        # Snapshot léger : on transmet au worker juste ce dont il aurait besoin
+        _snapshot = {
+            "id":    _cid_key,
+            "nom":   sg(col_nom, ""),
+            "prenom":sg(col_prenom, ""),
+            "email": sg(col_email, ""),
+            "ville": sg(col_ville, ""),
+        }
+        render_client_enrichment_block(_cid_key, _snapshot)
 
     # ── Voyages ───────────────────────────────────────────────────────────────
     if voyages_df is None or (hasattr(voyages_df, "empty") and voyages_df.empty):
