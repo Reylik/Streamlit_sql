@@ -4666,21 +4666,46 @@ def run_app(schema: dict, enrich: dict):
                         _s_val     = row.get(_statut_col) if _statut_col else None
                         stat_color = "#4ade80" if str(_s_val or "") == "actif" else "#f87171"
                         initials   = (str(row.get("prenom", "?"))[:1] + str(row.get("nom", "?"))[:1]).upper()
-                        cols_grid[i % 2].markdown(
-                            f"<div style='background:#13151d;border:1px solid #1e2130;"
-                            f"border-radius:12px;padding:16px 18px;margin-bottom:12px;'>"
-                            f"<div style='display:flex;align-items:center;gap:12px;'>"
-                            f"<div style='width:40px;height:40px;border-radius:50%;"
-                            f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
-                            f"display:flex;align-items:center;justify-content:center;"
-                            f"font-weight:700;color:white;'>{initials}</div>"
-                            f"<div><div style='font-weight:600;color:#e8eaf0;'>"
-                            f"{row.get('prenom','')} {row.get('nom','')}</div>"
-                            f"<div style='font-size:.8rem;color:#64748b;'>"
-                            f"{row.get('ville','')} &nbsp;·&nbsp; "
-                            f"<span style='color:{stat_color};'>{row.get('statut','')}</span>"
-                            f"</div></div></div></div>",
-                            unsafe_allow_html=True)
+                        with cols_grid[i % 2]:
+                            st.markdown(
+                                f"<div style='background:#13151d;border:1px solid #1e2130;"
+                                f"border-radius:12px;padding:16px 18px;margin-bottom:0;"
+                                f"border-bottom-left-radius:0;border-bottom-right-radius:0;'>"
+                                f"<div style='display:flex;align-items:center;gap:12px;'>"
+                                f"<div style='width:40px;height:40px;border-radius:50%;"
+                                f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
+                                f"display:flex;align-items:center;justify-content:center;"
+                                f"font-weight:700;color:white;'>{initials}</div>"
+                                f"<div><div style='font-weight:600;color:#e8eaf0;'>"
+                                f"{row.get('prenom','')} {row.get('nom','')}</div>"
+                                f"<div style='font-size:.8rem;color:#64748b;'>"
+                                f"{row.get('ville','')} &nbsp;·&nbsp; "
+                                f"<span style='color:{stat_color};'>{row.get('statut','')}</span>"
+                                f"</div></div></div></div>",
+                                unsafe_allow_html=True)
+
+                            # ── Bloc enrichissement API ─────────────────────
+                            _cid_raw = row.get(_id_col) if _id_col else row.get("id")
+                            if _cid_raw is not None and str(_cid_raw) not in ("", "—", "nan"):
+                                try:
+                                    _cid_key = int(float(_cid_raw))
+                                except (TypeError, ValueError):
+                                    _cid_key = str(_cid_raw)
+                                _snapshot = {
+                                    "id":     _cid_key,
+                                    "nom":    str(row.get("nom", "")),
+                                    "prenom": str(row.get("prenom", "")),
+                                    "email":  str(row.get("email", "")),
+                                    "ville":  str(row.get("ville", "")),
+                                }
+                                render_client_enrichment_block(_cid_key, _snapshot)
+
+                            # Fermeture visuelle de la carte (ligne du bas arrondie)
+                            st.markdown(
+                                "<div style='background:#13151d;border:1px solid #1e2130;"
+                                "border-top:none;border-radius:0 0 12px 12px;height:6px;"
+                                "margin-bottom:12px;'></div>",
+                                unsafe_allow_html=True)
                     _render_load_more(_total, "client_simple")
 
                 elif has_dest:
