@@ -2650,6 +2650,7 @@ def render_client_profile_card(
     all_voyages_df=None,
     passeports_df=None,        # DataFrame des passeports de ce client
     # ── Colonnes client — coordonnées ──────────────────────────────────────────
+    col_id="id",
     col_nom="nom", col_prenom="prenom", col_email="email",
     col_telephone="telephone", col_ville="ville", col_statut="statut",
     col_date_inscription="date_inscription",
@@ -2840,7 +2841,12 @@ def render_client_profile_card(
         unsafe_allow_html=True)
 
     # ── Enrichissement async (appel API en arrière-plan) ──────────────────────
-    _client_id = _safe_get(client_row, "id", None)
+    # Essaye col_id, puis "id", puis "clients_id" comme fallbacks
+    _client_id = _safe_get(client_row, col_id, None)
+    if _client_id is None or _client_id == "—":
+        _client_id = _safe_get(client_row, "id", None)
+    if _client_id is None or _client_id == "—":
+        _client_id = _safe_get(client_row, "clients_id", None)
     if _client_id is not None and _client_id != "—":
         try:
             _cid_key = int(float(_client_id))  # clé hashable
@@ -4963,19 +4969,28 @@ def run_app(schema: dict, enrich: dict):
                         else:
                             _pp = None
                         # Récupérer les traductions si l'enrichissement est terminé
-                        try:
-                            _ck = int(float(group.iloc[0].get(_id_col) or 0))
-                        except (TypeError, ValueError):
-                            _ck = str(group.iloc[0].get(_id_col))
-                        _state = get_enrichment_state(_ck)
+                        # (même logique de _cid_key que la collecte du batch)
+                        _id_raw = group.iloc[0].get(_id_col)
+                        _ck = None
+                        if _id_raw is not None and not (
+                            isinstance(_id_raw, float) and pd.isna(_id_raw)
+                        ):
+                            try:
+                                _ck = int(float(_id_raw))
+                            except (TypeError, ValueError):
+                                if str(_id_raw).strip() and str(_id_raw).lower() != "nan":
+                                    _ck = str(_id_raw)
                         _tx = None
-                        if _state["status"] == "done":
-                            _tx = (_state.get("data") or {}).get("translations")
+                        if _ck is not None:
+                            _state = get_enrichment_state(_ck)
+                            if _state["status"] == "done":
+                                _tx = (_state.get("data") or {}).get("translations")
                         render_client_profile_card(
                             client_row=group.iloc[0],
                             voyages_df=group,
                             all_voyages_df=_all_voy,
                             passeports_df=_pp,
+                            col_id=_id_col,
                             translations=_tx,
                         )
                     _render_load_more(_total, "client_grouped")
