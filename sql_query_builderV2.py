@@ -2294,12 +2294,29 @@ def _safe_get(data, col, default="—"):
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
-# Store global : { client_id -> {"status": "loading|done|error", "data": ..., "error": ...} }
-_enrich_store: dict = {}
-_enrich_lock                  = threading.Lock()
-_enrich_executor              = ThreadPoolExecutor(
-    max_workers=8, thread_name_prefix="client-enrich"
-)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Store global : { client_id -> {"status": "loading|done|error", "data": ...} }
+# Persisté via @st.cache_resource pour survivre aux rerun de la page.
+# Sans ça, à chaque rerun le store serait réinitialisé à {} et tout le cache
+# d'enrichissement serait perdu (visible : badges qui "disparaissent" à la fin).
+# ──────────────────────────────────────────────────────────────────────────────
+@st.cache_resource
+def _get_enrichment_singleton():
+    """Singleton partagé entre tous les reruns et toutes les sessions."""
+    return {
+        "store":       {},
+        "store_lock":  threading.Lock(),
+        "batch_state": {"running": False, "total": 0, "done": 0},
+        "batch_lock":  threading.Lock(),
+        "executor":    ThreadPoolExecutor(max_workers=8,
+                                           thread_name_prefix="client-enrich"),
+    }
+
+_singleton                    = _get_enrichment_singleton()
+_enrich_store                 = _singleton["store"]
+_enrich_lock                  = _singleton["store_lock"]
+_enrich_executor              = _singleton["executor"]
 
 
 def _do_client_enrichment(client_id, snapshot: dict) -> dict:
@@ -2461,13 +2478,10 @@ def ensure_enrichment_started(client_id, snapshot: dict) -> None:
 
 # ──────────────────────────────────────────────────────────────────────────────
 # BATCH SÉQUENTIEL : un seul thread enrichit toutes les fiches l'une après l'autre
+# (état partagé via le singleton, persistant entre reruns)
 # ──────────────────────────────────────────────────────────────────────────────
-_batch_state: dict = {
-    "running": False,   # True tant qu'un thread batch tourne
-    "total":   0,
-    "done":    0,
-}
-_batch_lock = threading.Lock()
+_batch_state = _singleton["batch_state"]
+_batch_lock  = _singleton["batch_lock"]
 
 
 def get_batch_state() -> dict:
@@ -2587,58 +2601,26 @@ def render_client_enrichment_block(client_id, snapshot: dict, accent_color: str 
         )
         return
 
-    # ── État DONE : récap des traductions effectuées ─────────────────────────
+    # ── État DONE : message discret (les traductions sont déjà dans la card) ──
     data = state.get("data") or {}
     translations = data.get("translations") or {}
-
-    # Compter le nombre total de traductions effectuées
     n_total = sum(len(v) for v in translations.values())
 
     if n_total == 0:
-        # Rien à traduire trouvé
         st.markdown(
-            f"<div style='background:linear-gradient(135deg,#0f1118,#13151d);"
-            f"border:1px solid #1e2130;border-left:3px solid {accent_color};"
-            f"border-radius:8px;padding:8px 14px;margin:6px 0;"
-            f"font-family:JetBrains Mono,monospace;font-size:.74rem;color:#64748b;'>"
+            f"<div style='color:#475569;font-size:.7rem;font-family:JetBrains Mono,monospace;"
+            f"padding:4px 14px;margin:4px 0;font-style:italic;'>"
             f"✨ Aucune traduction disponible pour cette fiche</div>",
             unsafe_allow_html=True,
         )
         return
 
-    def section_html(label, pairs_dict):
-        if not pairs_dict:
-            return ""
-        items = " &nbsp; ".join(
-            f"<span style='color:#cbd5e1;'>{fr}</span> "
-            f"<span style='color:{accent_color};'>→</span> "
-            f"<span style='background:{accent_color}22;color:{accent_color};"
-            f"padding:1px 7px;border-radius:6px;font-weight:600;'>{en}</span>"
-            for fr, en in pairs_dict.items()
-        )
-        return (
-            f"<div style='display:flex;align-items:flex-start;gap:10px;padding:3px 0;'>"
-            f"<span style='color:#64748b;font-size:.68rem;min-width:90px;flex-shrink:0;"
-            f"text-transform:uppercase;letter-spacing:.8px;'>{label}</span>"
-            f"<span style='font-size:.76rem;'>{items}</span></div>"
-        )
-
-    sections = filter(None, [
-        section_html("Profession",    translations.get("profession", {})),
-        section_html("Situation",     translations.get("situation_pro", {})),
-        section_html("Destinations",  translations.get("destinations", {})),
-        section_html("Types voyage",  translations.get("types_voyage", {})),
-    ])
-
     st.markdown(
-        f"<div style='background:linear-gradient(135deg,#0f1118 0%,#13151d 100%);"
-        f"border:1px solid #1e2130;border-left:3px solid {accent_color};"
-        f"border-radius:8px;padding:10px 14px;margin:6px 0;"
-        f"font-family:JetBrains Mono,monospace;'>"
-        f"<div style='color:#94a3b8;font-size:.68rem;text-transform:uppercase;"
-        f"letter-spacing:1.2px;margin-bottom:6px;'>"
-        f"✨ Traductions ({n_total})</div>"
-        f"{''.join(sections)}"
+        f"<div style='display:inline-flex;align-items:center;gap:6px;"
+        f"background:{accent_color}11;border:1px solid {accent_color}33;"
+        f"color:{accent_color};border-radius:8px;padding:3px 10px;margin:4px 0;"
+        f"font-family:JetBrains Mono,monospace;font-size:.7rem;font-weight:500;'>"
+        f"✓ Fiche enrichie · {n_total} traduction{'s' if n_total > 1 else ''} appliquée{'s' if n_total > 1 else ''}"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -2702,27 +2684,21 @@ def render_client_profile_card(
     """
     sg = lambda col, d="—": _safe_get(client_row, col, d)
 
-    # ── Helper : ajoute un badge violet « → EN » à côté d'une valeur FR ─────────
+    # ── Helper : remplace une valeur FR par sa traduction EN si dispo ──────────
+    # Si translations contient la traduction, on substitue la valeur affichée.
+    # Sinon, on garde la valeur FR. Le rendu garde donc un aspect identique,
+    # juste avec des termes EN à la place des FR pour les champs traduits.
     translations = translations or {}
-    def tx_badge(category: str, fr_value):
-        """
-        Si une traduction EN existe pour `fr_value` dans `translations[category]`,
-        retourne un fragment HTML inline « <badge>EN</badge> » à concaténer
-        après la valeur FR. Sinon retourne une chaîne vide.
-        """
+    _has_translations = any(translations.get(k) for k in
+                            ("profession", "situation_pro", "destinations", "types_voyage"))
+
+    def tx_translate(category: str, fr_value):
+        """Retourne la traduction EN si dispo, sinon la valeur FR originale."""
         if not fr_value or fr_value == "—":
-            return ""
+            return fr_value
         cat = translations.get(category) or {}
         en = cat.get(str(fr_value).strip())
-        if not en:
-            return ""
-        return (
-            f" <span style='background:#a78bfa22;color:#a78bfa;"
-            f"border:1px solid #a78bfa55;border-radius:8px;padding:1px 7px;"
-            f"font-size:.66rem;font-weight:600;font-family:JetBrains Mono,monospace;"
-            f"margin-left:4px;letter-spacing:.3px;' title='Traduction EN'>"
-            f"🇬🇧 {en}</span>"
-        )
+        return en if en else fr_value
 
     # ── En-tête + Identité + Pro : un seul bloc HTML (aucun gap Streamlit) ──────
     nom     = sg(col_nom);        prenom = sg(col_prenom)
@@ -2802,9 +2778,9 @@ def render_client_profile_card(
         prof = sg(col_profession, ""); emp = sg(col_employeur, "")
         sit  = sg(col_situation_pro, "")
         pro_rows = []
-        if prof: pro_rows.append(("Profession", f"{prof}{tx_badge('profession', prof)}"))
+        if prof: pro_rows.append(("Profession", tx_translate('profession', prof)))
         if emp:  pro_rows.append(("Employeur",  emp))
-        if sit:  pro_rows.append(("Contrat",    f"{sit}{tx_badge('situation_pro', sit)}"))
+        if sit:  pro_rows.append(("Contrat",    tx_translate('situation_pro', sit)))
         pro_body = "".join(
             f"<div style='display:flex;gap:8px;padding:5px 0;border-top:1px solid #1e2130;'><span style='color:#64748b;font-size:.72rem;min-width:85px;flex-shrink:0;'>{k}</span><span style='color:#e8eaf0;font-size:.78rem;'>{v}</span></div>"
             for k, v in pro_rows
@@ -2821,6 +2797,17 @@ def render_client_profile_card(
         idpro_html = (
             f"<div style='display:flex;border-top:0.5px solid #1e2130;'>{id_section}{pro_section}</div>"
         )
+    # ── Badge "EN" si la card est traduite ─────────────────────────────────
+    en_badge_html = ""
+    if _has_translations:
+        en_badge_html = (
+            "<div style='background:#a78bfa22;border:1px solid #a78bfa55;"
+            "color:#a78bfa;border-radius:14px;padding:2px 9px;font-size:.68rem;"
+            "font-weight:600;font-family:JetBrains Mono,monospace;letter-spacing:.5px;"
+            "white-space:nowrap;align-self:center;' title='Cette fiche affiche les "
+            "valeurs traduites en anglais'>🌍 EN</div>"
+        )
+
     st.markdown(
         f"<div style='background:#13151d;border:1px solid #1e2130;"
         f"border-radius:12px 12px 0 0;border-bottom:none;'>"
@@ -2834,6 +2821,7 @@ def render_client_profile_card(
         f"<div style='color:#64748b;font-size:.78rem;margin-top:1px;'>"
         f"{(''+ville+' &nbsp;·&nbsp; ' if ville else '')}"
         f"<span style='color:{sc};'>{statut}</span></div></div>"
+        f"{en_badge_html}"
         f"<div style='text-align:right;color:#94a3b8;'>{contact_html}</div>"
         f"</div>"
         f"{idpro_html}"
@@ -2951,14 +2939,14 @@ def render_client_profile_card(
                 f"background:{cc};flex-shrink:0;'></div>"
                 f"<div style='flex:1;'>"
                 f"<span style='color:#e8eaf0;font-weight:600;font-size:.85rem;'>"
-                f"{dest}{tx_badge('destinations', dest)}</span>"
+                f"{tx_translate('destinations', dest)}</span>"
                 f"<span style='color:#475569;font-size:.73rem;margin-left:8px;'>"
-                f"{pays}{tx_badge('destinations', pays)}{'  ·  ' if pays else ''}{date_dep}"
+                f"{tx_translate('destinations', pays)}{'  ·  ' if pays else ''}{date_dep}"
                 f"{'  →  '+date_ret if date_ret and date_ret != date_dep else ''}"
                 f"{d_str}</span></div>"
                 f"<span style='background:{tc}22;color:{tc};font-size:.68rem;"
-                f"padding:2px 7px;border-radius:10px;white-space:nowrap;'>{tv}</span>"
-                f"{tx_badge('types_voyage', tv)}"
+                f"padding:2px 7px;border-radius:10px;white-space:nowrap;'>"
+                f"{tx_translate('types_voyage', tv)}</span>"
                 f"{'<span style=\"font-size:.72rem;margin-left:4px;\">'+stars+'</span>' if stars else ''}"
                 f"</div></div>",
                 unsafe_allow_html=True)
