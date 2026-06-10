@@ -6,7 +6,10 @@ import copy
 import uuid
 import json
 import os
-from datetime import datetime
+import sys
+import time
+import random
+from datetime import datetime, timezone
 
 st.set_page_config(page_title="SQL Query Builder", page_icon="🔍",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -2284,6 +2287,50 @@ def _safe_get(data, col, default="—"):
     return val
 
 
+import html as _html
+
+
+def esc(v) -> str:
+    """
+    Échappe une valeur pour injection sûre dans du HTML (st.markdown avec
+    unsafe_allow_html=True). À appliquer à TOUTE donnée provenant de la base
+    ou d'une saisie utilisateur avant de la mettre dans une f-string HTML.
+
+    Un client nommé '<script>' ou une destination contenant '<b>' ne doit
+    jamais casser le rendu ni injecter de balisage.
+    """
+    if v is None:
+        return ""
+    return _html.escape(str(v), quote=True)
+
+
+def normalize_client_id(raw):
+    """
+    Convertit un identifiant client brut (int, float, str, NaN, None) en une
+    clé stable et hashable, identique partout dans l'application.
+
+    Garantit que 42, 42.0 et "42" produisent tous la même clé int(42), pour
+    que la collecte batch, le store d'enrichissement et le rendu des cards
+    pointent toujours vers la même entrée.
+
+    Retourne None si la valeur est inutilisable (None, NaN, vide, "nan").
+    """
+    if raw is None:
+        return None
+    try:
+        if pd.isna(raw):
+            return None
+    except (TypeError, ValueError):
+        pass  # non comparable à NaN (ex: liste) — on continue
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        s = str(raw).strip()
+        if not s or s.lower() == "nan":
+            return None
+        return s
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ENRICHISSEMENT ASYNC DES FICHES CLIENT
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2319,37 +2366,177 @@ _enrich_lock                  = _singleton["store_lock"]
 _enrich_executor              = _singleton["executor"]
 
 
-def _do_client_enrichment(client_id, snapshot: dict) -> dict:
+# ══════════════════════════════════════════════════════════════════════════════
+# CACHE DE TRADUCTIONS PERSISTANT — couche L2 (DB) en plus du L1 (RAM)
+# ──────────────────────────────────────────────────────────────────────────────
+# Interface minimale pour qu'on puisse plus tard remplacer le backend SQLite par
+# Postgres / Supabase / Redis / etc. sans toucher au reste du code.
+# ══════════════════════════════════════════════════════════════════════════════
+from datetime import timedelta
+from typing import Iterable, Optional
+
+
+class TranslationCacheBackend:
+    """Interface abstraite. Le système n'appelle que ces méthodes.
+
+    Pour brancher une autre DB, écrire une classe qui implémente ces 3
+    méthodes — rien d'autre dans le code ne change.
+    """
+
+    def get_many(self, pairs: Iterable[tuple]) -> dict:
+        """Récupère plusieurs traductions d'un coup.
+
+        Args:
+            pairs: itérable de (fr_value: str, category: str)
+
+        Returns:
+            dict { (fr_value, category): en_value or None }
+            - Clé absente du dict → pas trouvé en cache (ni TTL expiré)
+            - Valeur None         → trouvé, mais l'API avait renvoyé 'pas de
+                                    traduction' (cache négatif)
+            - Valeur str          → traduction trouvée
+        """
+        raise NotImplementedError
+
+    def put_many(self, items: Iterable[tuple]) -> None:
+        """Stocke plusieurs traductions d'un coup.
+
+        Args:
+            items: itérable de (fr_value: str, category: str, en_value: str | None)
+        """
+        raise NotImplementedError
+
+    def clear(self) -> None:
+        """Vide entièrement le cache (utile pour les tests / debug admin)."""
+        raise NotImplementedError
+
+
+# ── Implémentation SQLite (utilise la connexion partagée du module) ──────────
+class SqliteTranslationCache(TranslationCacheBackend):
+    """Stockage dans la même base SQLite que le reste de l'app."""
+
+    TTL_DAYS = 30   # Au-delà, on considère la traduction comme obsolète
+
+    def __init__(self, conn_factory):
+        """conn_factory : callable sans args qui renvoie une connexion SQLite.
+        On ne stocke pas la connexion directement car SQLite ne tolère pas le
+        partage entre threads sans précaution."""
+        self._conn_factory = conn_factory
+        self._init_lock    = threading.Lock()
+        self._initialized  = False
+
+    def _ensure_table(self, conn):
+        """Crée la table à la 1re utilisation (idempotent)."""
+        if self._initialized:
+            return
+        with self._init_lock:
+            if self._initialized:
+                return
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS _translation_cache (
+                    fr_value   TEXT    NOT NULL,
+                    category   TEXT    NOT NULL,
+                    en_value   TEXT,
+                    fetched_at TEXT    NOT NULL,
+                    PRIMARY KEY (fr_value, category)
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tc_category ON _translation_cache(category)"
+            )
+            conn.commit()
+            self._initialized = True
+
+    def get_many(self, pairs):
+        pairs = list(pairs)
+        if not pairs:
+            return {}
+        try:
+            conn = self._conn_factory()
+            self._ensure_table(conn)
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=self.TTL_DAYS)).isoformat()
+            # SQLite n'accepte qu'un nombre limité de paramètres → on chunke par 500
+            result = {}
+            CHUNK = 500
+            for i in range(0, len(pairs), CHUNK):
+                chunk = pairs[i:i + CHUNK]
+                placeholders = ",".join(["(?,?)"] * len(chunk))
+                flat = [v for p in chunk for v in p]
+                sql = (
+                    "SELECT fr_value, category, en_value FROM _translation_cache "
+                    f"WHERE (fr_value, category) IN (VALUES {placeholders}) "
+                    "AND fetched_at > ?"
+                )
+                rows = conn.execute(sql, (*flat, cutoff)).fetchall()
+                for fr, cat, en in rows:
+                    result[(fr, cat)] = en  # en peut être None (cache négatif)
+            return result
+        except Exception as e:
+            print(f"[tx-cache] get_many failed : {e}", file=sys.stderr)
+            return {}   # mode dégradé : tout sera vu comme miss → API call direct
+
+    def put_many(self, items):
+        items = list(items)
+        if not items:
+            return
+        try:
+            conn = self._conn_factory()
+            self._ensure_table(conn)
+            now = datetime.now(timezone.utc).isoformat()
+            conn.executemany(
+                "INSERT OR REPLACE INTO _translation_cache "
+                "(fr_value, category, en_value, fetched_at) VALUES (?,?,?,?)",
+                [(fr, cat, en, now) for (fr, cat, en) in items]
+            )
+            conn.commit()
+        except Exception as e:
+            print(f"[tx-cache] put_many failed : {e}", file=sys.stderr)
+
+    def clear(self):
+        try:
+            conn = self._conn_factory()
+            self._ensure_table(conn)
+            conn.execute("DELETE FROM _translation_cache")
+            conn.commit()
+        except Exception as e:
+            print(f"[tx-cache] clear failed : {e}", file=sys.stderr)
+
+
+# ── Backend par défaut : SQLite via get_connection() ─────────────────────────
+# Pour brancher une DB externe plus tard, remplacer cette ligne par :
+#   _translation_cache = PostgresTranslationCache(...)  # ou autre
+# Rien d'autre à changer dans le code.
+_translation_cache: TranslationCacheBackend = SqliteTranslationCache(
+    conn_factory=lambda: get_connection()
+)
+
+
+def _call_translation_api(values_by_category: dict) -> dict:
     """
     ⚠️  À REMPLACER par votre vrai appel API.
 
-    Reçoit un `snapshot` contenant les valeurs FR à traduire :
-        {
-          "profession":    "Ingénieur",
-          "situation_pro": "Salarié",
-          "destinations":  ["Paris", "Maroc", ...],
-          "types_voyage":  ["loisir", "affaires"],
-          ...
-        }
+    Reçoit UNIQUEMENT les valeurs qui ne sont pas en cache (DB ou RAM).
+    Renvoie les traductions trouvées. Les valeurs non traduisibles peuvent
+    être omises OU explicitement mises à None (cache négatif).
 
-    Doit renvoyer un dict avec une clé "translations" qui contient les
-    traductions EN pour chacune des valeurs FR :
-        {
-          "translations": {
-            "profession":    {"Ingénieur": "Engineer"},
-            "situation_pro": {"Salarié": "Employed"},
-            "destinations":  {"Paris": "Paris", "Maroc": "Morocco", ...},
-            "types_voyage":  {"loisir": "Leisure", "affaires": "Business"},
-          }
-        }
-
-    Les clés absentes du dict ne reçoivent pas de badge — le rendu est tolérant.
+    Args:
+        values_by_category : { "profession": ["Ingénieur", ...],
+                               "destinations": ["Maroc", "Italie", ...],
+                               ... }
+    Returns:
+        { "profession": {"Ingénieur": "Engineer"},
+          "destinations": {"Maroc": "Morocco", "Italie": "Italy"},
+          ... }
+        Les valeurs absentes du dict de retour ⇒ cache négatif (jamais retentées
+        avant TTL).
     """
-    # ── Simulation d'un appel API qui prend 0.5 à 1.5 seconde ──
-    import time, random
-    time.sleep(random.uniform(0.5, 1.5))
+    # time et random importés au niveau module
+    # Simulation : latence réseau proportionnelle au nb de valeurs (réaliste)
+    n_total = sum(len(v) for v in values_by_category.values())
+    if n_total:
+        time.sleep(min(2.0, 0.3 + 0.1 * n_total))
 
-    # Dictionnaire de traductions FR→EN (à remplacer par votre vrai appel API)
+    # ── Dictionnaire FR→EN intégré (à remplacer par requests.post(...) etc.) ──
     _FR_EN = {
         # Professions
         "Ingénieur":           "Engineer",
@@ -2376,8 +2563,6 @@ def _do_client_enrichment(client_id, snapshot: dict) -> dict:
         "Salarié":             "Employee",
         "Indépendant":         "Self-employed",
         "Fonctionnaire":       "Civil Servant",
-        "Étudiant":            "Student",
-        "Retraité":            "Retired",
         "Sans emploi":         "Unemployed",
         "Chef d'entreprise":   "Business Owner",
         "Intérimaire":         "Temp Worker",
@@ -2394,8 +2579,7 @@ def _do_client_enrichment(client_id, snapshot: dict) -> dict:
         "Professionnel":       "Professional",
         "famille":             "family",
         "Famille":             "Family",
-        # Destinations / pays — liste élargie pour couvrir plus de cas
-        # ── Europe ──
+        # Destinations / pays — Europe
         "France":              "France",
         "Espagne":             "Spain",
         "Italie":              "Italy",
@@ -2425,7 +2609,7 @@ def _do_client_enrichment(client_id, snapshot: dict) -> dict:
         "Croatie":             "Croatia",
         "Roumanie":            "Romania",
         "Bulgarie":            "Bulgaria",
-        "Serbie":               "Serbia",
+        "Serbie":              "Serbia",
         "Bosnie-Herzégovine":  "Bosnia and Herzegovina",
         "Albanie":             "Albania",
         "Macédoine du Nord":   "North Macedonia",
@@ -2441,7 +2625,7 @@ def _do_client_enrichment(client_id, snapshot: dict) -> dict:
         "Monaco":              "Monaco",
         "Andorre":             "Andorra",
         "Liechtenstein":       "Liechtenstein",
-        # ── Afrique ──
+        # Afrique
         "Maroc":               "Morocco",
         "Algérie":             "Algeria",
         "Tunisie":             "Tunisia",
@@ -2462,7 +2646,7 @@ def _do_client_enrichment(client_id, snapshot: dict) -> dict:
         "Île Maurice":         "Mauritius",
         "Réunion":             "Reunion",
         "Seychelles":          "Seychelles",
-        # ── Asie ──
+        # Asie
         "Inde":                "India",
         "Chine":               "China",
         "Japon":               "Japan",
@@ -2501,7 +2685,7 @@ def _do_client_enrichment(client_id, snapshot: dict) -> dict:
         "Kazakhstan":          "Kazakhstan",
         "Ouzbékistan":         "Uzbekistan",
         "Mongolie":            "Mongolia",
-        # ── Amériques ──
+        # Amériques
         "États-Unis":          "United States",
         "Canada":              "Canada",
         "Mexique":             "Mexico",
@@ -2516,24 +2700,24 @@ def _do_client_enrichment(client_id, snapshot: dict) -> dict:
         "Paraguay":            "Paraguay",
         "Uruguay":             "Uruguay",
         "Cuba":                "Cuba",
-        "Haïti":                "Haiti",
-        "République dominicaine":"Dominican Republic",
+        "Haïti":               "Haiti",
+        "République dominicaine": "Dominican Republic",
         "Jamaïque":            "Jamaica",
         "Costa Rica":          "Costa Rica",
         "Panama":              "Panama",
         "Guatemala":           "Guatemala",
-        # ── Océanie ──
+        # Océanie
         "Australie":           "Australia",
         "Nouvelle-Zélande":    "New Zealand",
         "Fidji":               "Fiji",
         "Polynésie française": "French Polynesia",
-        # ── Villes courantes ──
+        # Villes
         "Londres":             "London",
         "Rome":                "Rome",
         "Madrid":              "Madrid",
         "Berlin":              "Berlin",
         "Athènes":             "Athens",
-        "Vienne":              "Vienna",
+        "Vienne":               "Vienna",
         "Bruxelles":           "Brussels",
         "Lisbonne":            "Lisbon",
         "Amsterdam":           "Amsterdam",
@@ -2551,7 +2735,7 @@ def _do_client_enrichment(client_id, snapshot: dict) -> dict:
         "Casablanca":          "Casablanca",
         "Le Caire":            "Cairo",
         "Tokyo":               "Tokyo",
-        "Pékin":                "Beijing",
+        "Pékin":               "Beijing",
         "Shanghai":            "Shanghai",
         "Bangkok":             "Bangkok",
         "Hong Kong":           "Hong Kong",
@@ -2572,28 +2756,86 @@ def _do_client_enrichment(client_id, snapshot: dict) -> dict:
         "Melbourne":           "Melbourne",
     }
 
-    def translate(values):
-        """Traduit une liste de valeurs, ne garde que celles trouvées."""
-        result = {}
+    out = {}
+    for cat, values in values_by_category.items():
+        cat_dict = {}
         for v in values:
             if not v or not isinstance(v, str):
                 continue
             v_stripped = v.strip()
-            if v_stripped in _FR_EN:
-                result[v_stripped] = _FR_EN[v_stripped]
-        return result
+            en = _FR_EN.get(v_stripped)
+            if en:
+                cat_dict[v_stripped] = en
+            # Si pas trouvé, on n'ajoute pas la clé → l'orchestrateur en déduit
+            # un cache négatif (en_value=NULL).
+        if cat_dict:
+            out[cat] = cat_dict
+    return out
 
-    # ── Pour test d'erreur aléatoire, dé-commenter :
-    # if random.random() < 0.1: raise RuntimeError("API timeout")
 
-    return {
-        "translations": {
-            "profession":    translate([snapshot.get("profession", "")]),
-            "situation_pro": translate([snapshot.get("situation_pro", "")]),
-            "destinations":  translate(snapshot.get("destinations", []) or []),
-            "types_voyage":  translate(snapshot.get("types_voyage", []) or []),
-        }
+def _do_client_enrichment(client_id, snapshot: dict) -> dict:
+    """
+    Orchestrateur : consulte le cache L2 (DB), appelle l'API pour les valeurs
+    manquantes, persiste les nouvelles traductions, et renvoie l'union.
+
+    C'est cette fonction qui est appelée par le worker thread — pas
+    `_call_translation_api` directement.
+    """
+    # 1) Collecter toutes les (valeur FR, catégorie) à traduire pour ce client
+    by_cat = {
+        "profession":    [snapshot.get("profession", "")],
+        "situation_pro": [snapshot.get("situation_pro", "")],
+        "destinations":  snapshot.get("destinations", []) or [],
+        "types_voyage":  snapshot.get("types_voyage", []) or [],
     }
+    # Liste plate de couples (fr, cat) pour interroger le cache, avec
+    # dédoublonnage et nettoyage
+    pairs = set()
+    for cat, vals in by_cat.items():
+        for v in vals:
+            if isinstance(v, str) and v.strip():
+                pairs.add((v.strip(), cat))
+    pairs = list(pairs)
+
+    # 2) Consulter le cache L2
+    cached = _translation_cache.get_many(pairs)
+    # cached : { (fr, cat): en_or_None }   (clé absente = miss)
+
+    # 3) Identifier ce qui manque vraiment
+    missing_by_cat = {}
+    for (fr, cat) in pairs:
+        if (fr, cat) not in cached:
+            missing_by_cat.setdefault(cat, []).append(fr)
+
+    # 4) Appeler l'API uniquement pour les manquants
+    api_result = {}
+    if missing_by_cat:
+        api_result = _call_translation_api(missing_by_cat)
+
+    # 5) Préparer la persistance — y compris cache négatif pour les manquants
+    #    qui n'ont pas reçu de traduction (l'API ne les connait pas).
+    to_persist = []
+    for cat, vals in missing_by_cat.items():
+        api_cat = api_result.get(cat, {})
+        for fr in vals:
+            en = api_cat.get(fr)        # peut être None : cache négatif
+            to_persist.append((fr, cat, en))
+            # On met aussi dans `cached` pour construire le résultat final
+            cached[(fr, cat)] = en
+
+    if to_persist:
+        _translation_cache.put_many(to_persist)
+
+    # 6) Reconstruire le format attendu côté UI (sans cache négatif)
+    translations = {}
+    for (fr, cat), en in cached.items():
+        if en is None:
+            continue                    # cache négatif : pas de badge
+        translations.setdefault(cat, {})[fr] = en
+
+    return {"translations": translations}
+
+
 
 
 def _enrich_worker(client_id, snapshot: dict) -> None:
@@ -2638,6 +2880,19 @@ def get_batch_state() -> dict:
     """Lecture thread-safe de l'état du batch global."""
     with _batch_lock:
         return dict(_batch_state)
+
+
+def purge_enrichment_caches() -> None:
+    """
+    Vide tous les niveaux de cache de traductions : RAM (store) + DB (L2),
+    et remet à zéro les compteurs du batch. Utilisé par les boutons 🗑 Cache.
+    """
+    with _enrich_lock:
+        _enrich_store.clear()
+    with _batch_lock:
+        _batch_state["done"]  = 0
+        _batch_state["total"] = 0
+    _translation_cache.clear()
 
 
 def _batch_enrich_worker(snapshots: list) -> None:
@@ -2843,17 +3098,19 @@ def render_client_profile_card(
                             ("profession", "situation_pro", "destinations", "types_voyage"))
 
     def tx_translate(category: str, fr_value):
-        """Retourne la traduction EN si dispo, sinon la valeur FR originale."""
+        """Retourne la traduction EN si dispo, sinon la valeur FR originale.
+        Le résultat est échappé : sûr pour injection directe dans le HTML."""
         if not fr_value or fr_value == "—":
-            return fr_value
+            return esc(fr_value)
         cat = translations.get(category) or {}
         en = cat.get(str(fr_value).strip())
-        return en if en else fr_value
+        return esc(en if en else fr_value)
 
     # ── En-tête + Identité + Pro : un seul bloc HTML (aucun gap Streamlit) ──────
-    nom     = sg(col_nom);        prenom = sg(col_prenom)
-    ville   = sg(col_ville, "");  statut = sg(col_statut, "")
-    email   = sg(col_email, "");  tel    = sg(col_telephone, "")
+    # Toutes les valeurs destinées au HTML sont échappées dès l'extraction.
+    nom     = esc(sg(col_nom));        prenom = esc(sg(col_prenom))
+    ville   = esc(sg(col_ville, ""));  statut = esc(sg(col_statut, ""))
+    email   = esc(sg(col_email, ""));  tel    = esc(sg(col_telephone, ""))
     ini     = ((prenom[:1] if prenom and prenom != "—" else "") +
                (nom[:1]   if nom    and nom    != "—" else "")).upper() or "?"
     sc      = "#4ade80" if statut == "actif" else "#f87171"
@@ -2864,17 +3121,17 @@ def render_client_profile_card(
     # ── Construire identité HTML ─────────────────────────────────────────────
     id_section = ""
     if show_identity:
-        ci_num = sg(col_num_ci, ""); ci_exp = sg(col_exp_ci, "")
+        ci_num = esc(sg(col_num_ci, "")); ci_exp = esc(sg(col_exp_ci, ""))
         id_rows = []
         if passeports_df is not None and not passeports_df.empty:
             from datetime import date as _date
             _today = _date.today().isoformat()
             pp_tags = []
             for _, pp in passeports_df.iterrows():
-                num  = _safe_get(pp, col_pp_num, "?")
-                nat  = _safe_get(pp, col_pp_nat, "")
-                emis = _safe_get(pp, col_pp_emission, "")
-                exp  = _safe_get(pp, col_pp_expiration, "")
+                num  = esc(_safe_get(pp, col_pp_num, "?"))
+                nat  = esc(_safe_get(pp, col_pp_nat, ""))
+                emis = esc(_safe_get(pp, col_pp_emission, ""))
+                exp  = esc(_safe_get(pp, col_pp_expiration, ""))
                 expired = bool(exp and exp != "—" and str(exp) < _today)
                 bg  = "#450a0a" if expired else "#052e16"
                 fg  = "#fca5a5" if expired else "#86efac"
@@ -2925,7 +3182,7 @@ def render_client_profile_card(
     # ── Construire pro HTML ───────────────────────────────────────────────────
     pro_section = ""
     if show_professional:
-        prof = sg(col_profession, ""); emp = sg(col_employeur, "")
+        prof = sg(col_profession, ""); emp = esc(sg(col_employeur, ""))
         sit  = sg(col_situation_pro, "")
         # Labels traduits si la card est en mode EN
         lbl_section = "Professional situation" if _has_translations else "Situation professionnelle"
@@ -2991,11 +3248,8 @@ def render_client_profile_card(
         _client_id = _safe_get(client_row, "id", None)
     if _client_id is None or _client_id == "—":
         _client_id = _safe_get(client_row, "clients_id", None)
-    if _client_id is not None and _client_id != "—":
-        try:
-            _cid_key = int(float(_client_id))  # clé hashable
-        except (TypeError, ValueError):
-            _cid_key = str(_client_id)
+    _cid_key = normalize_client_id(_client_id) if _client_id != "—" else None
+    if _cid_key is not None:
         # Snapshot léger : on transmet au worker juste ce dont il aurait besoin
         _snapshot = {
             "id":    _cid_key,
@@ -3004,7 +3258,15 @@ def render_client_profile_card(
             "email": sg(col_email, ""),
             "ville": sg(col_ville, ""),
         }
-        render_client_enrichment_block(_cid_key, _snapshot)
+        _eb1, _eb2 = st.columns([4, 1])
+        with _eb1:
+            render_client_enrichment_block(_cid_key, _snapshot)
+        with _eb2:
+            if st.button("👤 Fiche 360°", key=f"open_c360_{_cid_key}",
+                         use_container_width=True,
+                         help="Ouvrir l'onglet récapitulatif complet de ce client"):
+                st.session_state["selected_client_id"] = _cid_key
+                st.rerun()
 
     # ── Voyages ───────────────────────────────────────────────────────────────
     if voyages_df is None or (hasattr(voyages_df, "empty") and voyages_df.empty):
@@ -3039,8 +3301,8 @@ def render_client_profile_card(
         br       = "border-radius:0 0 12px 12px;" if is_last else ""
         dest     = vsg(col_v_destination);  pays   = vsg(col_v_pays, "")
         cont     = vsg(col_v_continent, "");tv      = vsg(col_v_type, "")
-        date_dep = str(vsg(col_v_date_dep, ""))[:10]
-        date_ret = str(vsg(col_v_date_ret, ""))[:10]
+        date_dep = esc(str(vsg(col_v_date_dep, ""))[:10])
+        date_ret = esc(str(vsg(col_v_date_ret, ""))[:10])
         duree    = vsg(col_v_duree, None);   hotel   = vsg(col_v_hotel, "")
         transport= vsg(col_v_transport, ""); note_v  = vsg(col_v_note, None)
         gid      = vsg(col_v_groupe, None)
@@ -3128,17 +3390,30 @@ def render_client_profile_card(
                     unsafe_allow_html=True)
             else:
              with st.popover(f"👥 {len(all_members)}", use_container_width=True):
+                _lbl_part = "participant" if _has_translations else "participant"
+                _lbl_parts = "participants" if _has_translations else "participants"
+                # (Note : "participant" est identique en FR et EN, on garde le même mot)
                 st.markdown(
                     f"<div style='font-size:.7rem;text-transform:uppercase;"
                     f"letter-spacing:1px;font-family:JetBrains Mono,monospace;"
                     f"color:#94a3b8;margin-bottom:8px;'>"
-                    f"{len(all_members)} participant"
-                    f"{'s' if len(all_members)>1 else ''}</div>",
+                    f"{len(all_members)} "
+                    f"{_lbl_parts if len(all_members)>1 else _lbl_part}</div>",
                     unsafe_allow_html=True)
                 for mp, mn, mprof, mvil, mstat in all_members:
-                    cp_ini = ((mp[:1] if mp else "")+(mn[:1] if mn else "")).upper() or "?"
+                    cp_ini = esc(((mp[:1] if mp else "")+(mn[:1] if mn else "")).upper() or "?")
                     sc2    = "#4ade80" if mstat == "actif" else "#f87171"
-                    meta   = "  ·  ".join(filter(None, [mprof, mvil]))
+                    # Traduire profession et ville si possible (tx_translate échappe)
+                    _mprof_t = tx_translate('profession', mprof) if mprof else esc(mprof)
+                    _mvil_t  = tx_translate('destinations', mvil) if mvil else esc(mvil)
+                    # Traduire le statut "actif" → "active", "inactif" → "inactive"
+                    _mstat_t = mstat
+                    if _has_translations and mstat:
+                        _STATUT_MAP = {"actif": "active", "inactif": "inactive"}
+                        _mstat_t = _STATUT_MAP.get(str(mstat).strip().lower(), mstat)
+                    _mstat_t = esc(_mstat_t)
+                    _mp_e, _mn_e = esc(mp), esc(mn)
+                    meta   = "  ·  ".join(filter(None, [_mprof_t, _mvil_t]))
                     st.markdown(
                         f"<div style='display:flex;align-items:flex-start;gap:10px;"
                         f"padding:8px 0;border-top:1px solid #1e2130;'>"
@@ -3149,11 +3424,11 @@ def render_client_profile_card(
                         f"flex-shrink:0;margin-top:1px;'>{cp_ini}</div>"
                         f"<div style='flex:1;'>"
                         f"<div style='font-weight:600;font-size:.85rem;color:#e8eaf0;'>"
-                        f"{mp} {mn}</div>"
+                        f"{_mp_e} {_mn_e}</div>"
                         f"{'<div style=\"font-size:.72rem;color:#64748b;margin-top:2px;\">' + meta + '</div>' if meta else ''}"
                         f"<div style='margin-top:3px;'>"
                         f"<span style='font-size:.68rem;padding:1px 7px;border-radius:20px;"
-                        f"background:{sc2}22;color:{sc2};'>{mstat or '—'}</span>"
+                        f"background:{sc2}22;color:{sc2};'>{_mstat_t or '—'}</span>"
                         f"</div></div></div>",
                         unsafe_allow_html=True)
 
@@ -3459,6 +3734,114 @@ def _find_col(df, *candidates: str):
         if c in df.columns:
             return c
     return None
+
+
+_JOIN_PREFIXES = ("voyages_", "clients_", "passeports_", "employes_", "affectations_")
+
+
+def _find_join_col(df, *names: str):
+    """
+    Comme _find_col, mais essaie aussi chaque nom avec les préfixes de jointure
+    (voyages_, clients_, ...). Utile quand une requête joint plusieurs tables
+    qui partagent des noms de colonnes : 'destination' peut devenir
+    'voyages_destination' selon la requête.
+    """
+    for n in names:
+        if n in df.columns:
+            return n
+    for n in names:
+        for prefix in _JOIN_PREFIXES:
+            if (prefix + n) in df.columns:
+                return prefix + n
+    return None
+
+
+def get_translations_for(client_id):
+    """
+    Retourne le dict de traductions {category: {fr: en}} pour un client si
+    son enrichissement est terminé, sinon None.
+
+    Centralise la séquence get_enrichment_state → check 'done' → extraire
+    'translations', dupliquée à plusieurs endroits du rendu.
+    """
+    if client_id is None:
+        return None
+    state = get_enrichment_state(client_id)
+    if state.get("status") != "done":
+        return None
+    return (state.get("data") or {}).get("translations")
+
+
+def build_client_snapshot(df, row, id_col, cid_raw, cid_key) -> dict:
+    """
+    Construit le snapshot d'un client pour l'enrichissement API : champs
+    d'identité + valeurs FR à traduire (profession, situation, destinations,
+    types de voyage agrégés depuis toutes ses lignes du DataFrame).
+
+    Les colonnes sont résolues de façon tolérante aux préfixes de jointure
+    via _find_join_col.
+    """
+    # Lignes du client dans le df complet (masque NaN-safe)
+    try:
+        client_rows = df[df[id_col].apply(
+            lambda x: x == cid_raw if pd.notna(x) else False
+        )]
+    except Exception:
+        client_rows = df[df[id_col] == cid_raw]
+
+    def _col_values(col_name):
+        """Valeurs uniques non vides d'une colonne pour ce client."""
+        if not col_name:
+            return []
+        return [str(v) for v in client_rows[col_name].dropna().unique()
+                if str(v).strip()]
+
+    destinations = (_col_values(_find_join_col(df, "destination"))
+                    + _col_values(_find_join_col(df, "pays_destination", "pays")))
+    types_voyage = _col_values(_find_join_col(df, "type_voyage"))
+
+    def _row_str(*names):
+        col = _find_join_col(df, *names)
+        return (str(row.get(col, "") or "") if col else "")
+
+    return {
+        "id":            cid_key,
+        "nom":           _row_str("nom"),
+        "prenom":        _row_str("prenom"),
+        "email":         _row_str("email"),
+        "ville":         _row_str("ville"),
+        "profession":    _row_str("profession"),
+        "situation_pro": _row_str("situation_pro"),
+        "destinations":  list(set(destinations)),
+        "types_voyage":  list(set(types_voyage)),
+    }
+
+
+def collect_enrich_snapshots(df, id_col, limit: int) -> list:
+    """
+    Parcourt les clients uniques visibles (selon la pagination) et construit
+    la liste [(cid_key, snapshot), ...] destinée au batch d'enrichissement.
+
+    Tolérant aux lignes invalides : un client dont l'extraction échoue est
+    loggé et ignoré, sans interrompre les autres.
+    """
+    snapshots = []
+    unique_df = df.drop_duplicates(subset=[id_col]).iloc[:limit]
+    for _, row in unique_df.iterrows():
+        try:
+            cid_raw = row.get(id_col)
+            cid_key = normalize_client_id(cid_raw)
+            if cid_key is None:
+                continue
+            snapshots.append(
+                (cid_key, build_client_snapshot(df, row, id_col, cid_raw, cid_key))
+            )
+        except Exception as exc:
+            print(f"[enrich] Snapshot loupé : {exc}", file=sys.stderr)
+            continue
+    return snapshots
+
+
 def compute_enrich_count(table, where_clause, params, enrich):
     sql = enrich[table]["count_sql"].format(where=where_clause)
     try:
@@ -3500,7 +3883,7 @@ def _date_label(val):
 
 def _leaf_html(conditions, idx):
     c           = conditions[idx]
-    col_display = c.get("label", c["column"])   # label si dispo, sinon nom brut
+    col_display = esc(c.get("label", c["column"]))   # label si dispo, sinon nom brut
 
     # ── Recherche par couples ────────────────────────────────────────────────
     if c.get("is_pair"):
@@ -3512,12 +3895,12 @@ def _leaf_html(conditions, idx):
         shown = pairs[:2]
         preview_items = []
         for v1, v2 in shown:
-            preview_items.append(f"«{v1}·{v2}»")
+            preview_items.append(f"«{esc(v1)}·{esc(v2)}»")
         preview = " · ".join(preview_items)
         suffix  = (f" <span style='color:#64748b;font-size:.75rem;'>+{n-2} autres</span>"
                    if n > 2 else "")
         return (f"<span class='t-leaf'>"
-                f"<b style='color:#a5f3fc;'>{col_labels[0]} + {col_labels[1]}</b> "
+                f"<b style='color:#a5f3fc;'>{esc(col_labels[0])} + {esc(col_labels[1])}</b> "
                 f"<span style='color:#fbbf24;'>parmi {n} couple{'s' if n > 1 else ''}</span> "
                 f"<span style='color:#86efac;'>[{preview}{suffix}]</span>"
                 f"</span>")
@@ -3527,19 +3910,19 @@ def _leaf_html(conditions, idx):
             date1, date2 = c["value"]
             return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{col_display}</b> " 
                     f"<span style='color:#fbbf24;'>entre le</span> "
-                    f"<span style='color:#86efac;'>{_format_date_fr(date1)}</span> "
+                    f"<span style='color:#86efac;'>{esc(_format_date_fr(date1))}</span> "
                     f"<span style='color:#fbbf24;'>et le</span> "
-                    f"<span style='color:#86efac;'>{_format_date_fr(date2)}</span></span>")
+                    f"<span style='color:#86efac;'>{esc(_format_date_fr(date2))}</span></span>")
         else:
             return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{col_display}</b> "
                     f"<span style='color:#fbbf24;'>en</span> " 
-                    f"<span style='color:#86efac;'>{_date_label(c['value'])}</span></span>")
+                    f"<span style='color:#86efac;'>{esc(_date_label(c['value']))}</span></span>")
     if c.get("is_bulk"):
         values  = c["values"]
         n       = len(values)
         op_str  = OP_NATURAL.get(c["operator"], c["operator"])
         shown   = values[:3]
-        preview = " · ".join(f"«{v}»" for v in shown)
+        preview = " · ".join(f"«{esc(v)}»" for v in shown)
         suffix  = f" <span style='color:#64748b;font-size:.75rem;'>+{n-3} autres</span>" if n > 3 else ""
         return (f"<span class='t-leaf'>"
                 f"<b style='color:#a5f3fc;'>{col_display}</b> "
@@ -3549,7 +3932,7 @@ def _leaf_html(conditions, idx):
     op_str = OP_NATURAL.get(c["operator"], c["operator"])
     return (f"<span class='t-leaf'><b style='color:#a5f3fc;'>{col_display}</b> "
             f"<span style='color:#fbbf24;'>{op_str}</span> "
-            f"<span style='color:#86efac;'>«\u202f{c['value']}\u202f»</span></span>")
+            f"<span style='color:#86efac;'>«\u202f{esc(c['value'])}\u202f»</span></span>")
 
 
 def _prefix_html(prefix_parts, connector, connector_color):
@@ -4076,6 +4459,303 @@ MAX_HISTORY = 20
 # ══════════════════════════════════════════════════════════════════════════════
 # HISTORIQUE  —  persisté dans la table SQL _app_history
 # ══════════════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# FAVORIS CLIENTS — liés à l'utilisateur, persistés en DB
+# ──────────────────────────────────────────────────────────────────────────────
+# Un favori mémorise aussi le nombre de voyages du client au moment de l'ajout,
+# ce qui permet d'afficher "+N nouveaux voyages" pour suivre ses évolutions.
+# ══════════════════════════════════════════════════════════════════════════════
+def _init_favorites_table(conn) -> None:
+    """Crée la table _user_favorites si elle n'existe pas encore."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS _user_favorites (
+            user_id              TEXT    NOT NULL,
+            client_id            INTEGER NOT NULL,
+            added_at             TEXT    NOT NULL,
+            voyage_count_at_add  INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (user_id, client_id)
+        )
+    """)
+    conn.commit()
+
+
+def _fav_is(conn, user_id: str, client_id) -> bool:
+    """Le client est-il dans les favoris de cet utilisateur ?"""
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM _user_favorites WHERE user_id=? AND client_id=?",
+            (user_id, int(client_id))).fetchone()
+        return row is not None
+    except Exception:
+        return False
+
+
+def _fav_toggle(conn, user_id: str, client_id) -> bool:
+    """Ajoute ou retire le client des favoris. Retourne le nouvel état."""
+    cid = int(client_id)
+    if _fav_is(conn, user_id, cid):
+        conn.execute("DELETE FROM _user_favorites WHERE user_id=? AND client_id=?",
+                     (user_id, cid))
+        conn.commit()
+        return False
+    # Snapshot du nombre de voyages au moment de l'ajout (pour le suivi)
+    try:
+        n_voy = conn.execute(
+            "SELECT COUNT(*) FROM voyages WHERE client_id=?", (cid,)).fetchone()[0]
+    except Exception:
+        n_voy = 0
+    conn.execute(
+        "INSERT OR REPLACE INTO _user_favorites "
+        "(user_id, client_id, added_at, voyage_count_at_add) VALUES (?,?,?,?)",
+        (user_id, cid, datetime.now(timezone.utc).isoformat(), n_voy))
+    conn.commit()
+    return True
+
+
+def _fav_list(conn, user_id: str) -> list:
+    """
+    Liste des favoris de l'utilisateur, enrichie pour le suivi :
+    [{client_id, nom, prenom, ville, added_at, new_voyages}, ...]
+    new_voyages = voyages ajoutés depuis la mise en favori.
+    """
+    try:
+        rows = conn.execute("""
+            SELECT f.client_id, f.added_at, f.voyage_count_at_add,
+                   c.nom, c.prenom, c.ville,
+                   (SELECT COUNT(*) FROM voyages v WHERE v.client_id = f.client_id)
+                       AS voyage_count_now
+            FROM _user_favorites f
+            LEFT JOIN clients c ON c.id = f.client_id
+            WHERE f.user_id = ?
+            ORDER BY f.added_at DESC
+        """, (user_id,)).fetchall()
+    except Exception:
+        return []
+    out = []
+    for cid, added, n_add, nom, prenom, ville, n_now in rows:
+        out.append({
+            "client_id":   cid,
+            "added_at":    added,
+            "nom":         nom or "?",
+            "prenom":      prenom or "",
+            "ville":       ville or "",
+            "new_voyages": max(0, (n_now or 0) - (n_add or 0)),
+        })
+    return out
+
+
+def _render_favorites_popover(conn, user_id: str) -> None:
+    """Popover ⭐ listant les clients favoris avec badge d'évolution."""
+    favs = _fav_list(conn, user_id)
+    label = f"⭐ {len(favs)}" if favs else "⭐"
+    with st.popover(label, use_container_width=True,
+                    help="Mes clients favoris"):
+        if not favs:
+            st.markdown(
+                "<div style='color:#475569;font-size:.78rem;font-style:italic;"
+                "font-family:JetBrains Mono,monospace;'>Aucun favori. "
+                "Ouvrez la fiche d'un client puis cliquez sur ⭐.</div>",
+                unsafe_allow_html=True)
+            return
+        st.markdown(
+            "<div style='font-size:.7rem;text-transform:uppercase;letter-spacing:1px;"
+            "font-family:JetBrains Mono,monospace;color:#94a3b8;margin-bottom:6px;'>"
+            f"{len(favs)} client{'s' if len(favs) > 1 else ''} suivi"
+            f"{'s' if len(favs) > 1 else ''}</div>",
+            unsafe_allow_html=True)
+        for f in favs:
+            fc1, fc2 = st.columns([5, 1.2])
+            with fc1:
+                _badge = ""
+                if f["new_voyages"] > 0:
+                    _badge = (f" <span style='background:#86efac22;color:#86efac;"
+                              f"border:1px solid #86efac55;border-radius:10px;"
+                              f"padding:0 7px;font-size:.66rem;font-weight:700;'>"
+                              f"+{f['new_voyages']} voyage"
+                              f"{'s' if f['new_voyages'] > 1 else ''}</span>")
+                st.markdown(
+                    f"<div style='padding:4px 0;font-size:.82rem;'>"
+                    f"<b style='color:#e8eaf0;'>{esc(f['prenom'])} {esc(f['nom'])}</b>"
+                    f"{_badge}<br>"
+                    f"<span style='color:#64748b;font-size:.72rem;'>"
+                    f"{esc(f['ville'])}</span></div>",
+                    unsafe_allow_html=True)
+            with fc2:
+                if st.button("👤", key=f"fav_open_{f['client_id']}",
+                             help="Ouvrir la fiche"):
+                    st.session_state["selected_client_id"] = f["client_id"]
+                    st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FICHE CLIENT 360° — récapitulatif complet d'un client
+# ══════════════════════════════════════════════════════════════════════════════
+def load_client_360(client_id) -> dict:
+    """
+    Charge tout ce qu'on sait d'un client : identité, passeports, voyages,
+    et quelques statistiques agrégées. Retourne {} si introuvable.
+    """
+    db = _get_db()
+    cid = int(client_id)
+    out = {}
+    try:
+        cdf = db.read_sql("SELECT * FROM clients WHERE id = ?", (cid,))
+        if cdf.empty:
+            return {}
+        out["client"] = cdf.iloc[0]
+        out["passeports"] = db.read_sql(
+            "SELECT * FROM passeports WHERE client_id = ? ORDER BY date_expiration DESC",
+            (cid,))
+        out["voyages"] = db.read_sql(
+            "SELECT * FROM voyages WHERE client_id = ? ORDER BY date_depart DESC",
+            (cid,))
+        v = out["voyages"]
+        out["stats"] = {
+            "nb_voyages":   len(v),
+            "budget_total": float(v["budget"].fillna(0).sum()) if "budget" in v.columns and len(v) else 0.0,
+            "destinations": sorted(set(str(x) for x in v.get("destination", pd.Series(dtype=str)).dropna())),
+            "continents":   sorted(set(str(x) for x in v.get("continent",   pd.Series(dtype=str)).dropna())),
+            "dernier":      str(v["date_depart"].iloc[0]) if len(v) and "date_depart" in v.columns else None,
+        }
+    except Exception as exc:
+        print(f"[client360] load failed : {exc}", file=sys.stderr)
+        return {}
+    return out
+
+
+def render_client_360(client_id, conn, user_id: str) -> None:
+    """
+    Onglet récapitulatif d'un client : identité complète, statistiques,
+    passeports, historique de voyages — avec bouton ⭐ favori et fermeture.
+    """
+    data = load_client_360(client_id)
+    if not data:
+        st.warning(f"Client #{client_id} introuvable.")
+        if st.button("✕ Fermer", key="c360_close_nf"):
+            st.session_state.pop("selected_client_id", None)
+            st.rerun()
+        return
+
+    c     = data["client"]
+    stats = data["stats"]
+    sg    = lambda col, d="—": esc(_safe_get(c, col, d))
+
+    # ── Barre d'actions : favori + fermer ────────────────────────────────────
+    is_fav = _fav_is(conn, user_id, client_id)
+    a1, a2, a3 = st.columns([5, 1.6, 1])
+    with a1:
+        st.markdown(
+            f"<div style='font-size:1.25rem;font-weight:700;color:#e8eaf0;"
+            f"font-family:Syne,sans-serif;padding-top:4px;'>"
+            f"👤 {sg('prenom')} {sg('nom')}"
+            f"{' <span style=\"color:#fbbf24;\">⭐</span>' if is_fav else ''}</div>",
+            unsafe_allow_html=True)
+    with a2:
+        _fav_label = "★ Retirer le favori" if is_fav else "☆ Mettre en favori"
+        if st.button(_fav_label, key="c360_fav", use_container_width=True):
+            _fav_toggle(conn, user_id, client_id)
+            st.rerun()
+    with a3:
+        if st.button("✕ Fermer", key="c360_close", use_container_width=True):
+            st.session_state.pop("selected_client_id", None)
+            st.rerun()
+
+    # ── Statistiques clés ─────────────────────────────────────────────────────
+    s1, s2, s3, s4 = st.columns(4)
+    _stat_style = ("background:#13151d;border:1px solid #1e2130;border-radius:10px;"
+                   "padding:12px 16px;text-align:center;")
+    s1.markdown(f"<div style='{_stat_style}'><div style='color:#94a3b8;font-size:.68rem;"
+                f"text-transform:uppercase;'>Voyages</div><div style='color:#a5f3fc;"
+                f"font-size:1.4rem;font-weight:700;'>{stats['nb_voyages']}</div></div>",
+                unsafe_allow_html=True)
+    _budget_fmt = f"{stats['budget_total']:,.0f}".replace(",", " ")
+    s2.markdown(f"<div style='{_stat_style}'><div style='color:#94a3b8;font-size:.68rem;"
+                f"text-transform:uppercase;'>Budget total</div><div style='color:#86efac;"
+                f"font-size:1.4rem;font-weight:700;'>{_budget_fmt} €</div></div>",
+                unsafe_allow_html=True)
+    s3.markdown(f"<div style='{_stat_style}'><div style='color:#94a3b8;font-size:.68rem;"
+                f"text-transform:uppercase;'>Destinations</div><div style='color:#c4b5fd;"
+                f"font-size:1.4rem;font-weight:700;'>{len(stats['destinations'])}</div></div>",
+                unsafe_allow_html=True)
+    s4.markdown(f"<div style='{_stat_style}'><div style='color:#94a3b8;font-size:.68rem;"
+                f"text-transform:uppercase;'>Dernier départ</div><div style='color:#fbbf24;"
+                f"font-size:1.05rem;font-weight:700;padding-top:5px;'>"
+                f"{esc(_format_date_fr(stats['dernier'])) if stats['dernier'] else '—'}</div></div>",
+                unsafe_allow_html=True)
+
+    st.markdown("<div style='margin:10px 0;'></div>", unsafe_allow_html=True)
+
+    # ── Identité + coordonnées + situation pro (2 colonnes) ──────────────────
+    i1, i2 = st.columns(2)
+    def _kv_block(title, rows):
+        body = "".join(
+            f"<div style='display:flex;gap:8px;padding:5px 0;"
+            f"border-top:1px solid #1e2130;'>"
+            f"<span style='color:#64748b;font-size:.72rem;min-width:130px;"
+            f"flex-shrink:0;'>{k}</span>"
+            f"<span style='color:#e8eaf0;font-size:.8rem;'>{v}</span></div>"
+            for k, v in rows if v and v != "—")
+        return (f"<div style='background:#13151d;border:1px solid #1e2130;"
+                f"border-radius:10px;padding:12px 16px;'>"
+                f"<div style='color:#60a5fa;font-size:.68rem;text-transform:uppercase;"
+                f"letter-spacing:1px;font-family:JetBrains Mono,monospace;"
+                f"margin-bottom:6px;'>{title}</div>{body or '—'}</div>")
+
+    with i1:
+        st.markdown(_kv_block("Coordonnées", [
+            ("Email",     sg("email", "")),
+            ("Téléphone", sg("telephone", "")),
+            ("Ville",     sg("ville", "")),
+            ("Pays",      sg("pays", "")),
+            ("Inscrit le", esc(_format_date_fr(_safe_get(c, "date_inscription", "")))),
+            ("Statut",    sg("statut", "")),
+        ]), unsafe_allow_html=True)
+    with i2:
+        st.markdown(_kv_block("Situation professionnelle", [
+            ("Profession", sg("profession", "")),
+            ("Employeur",  sg("employeur", "")),
+            ("Contrat",    sg("situation_pro", "")),
+            ("N° CI",      sg("num_carte_identite", "")),
+            ("Exp. CI",    esc(_format_date_fr(_safe_get(c, "date_expiration_ci", "")))),
+        ]), unsafe_allow_html=True)
+
+    # ── Passeports ────────────────────────────────────────────────────────────
+    pp = data["passeports"]
+    if not pp.empty:
+        st.markdown("<div style='margin:10px 0 4px;color:#94a3b8;font-size:.72rem;"
+                    "text-transform:uppercase;letter-spacing:1px;"
+                    "font-family:JetBrains Mono,monospace;'>🛂 Passeports</div>",
+                    unsafe_allow_html=True)
+        _today = datetime.now().date().isoformat()
+        for _, p in pp.iterrows():
+            exp = str(_safe_get(p, "date_expiration", ""))
+            expired = bool(exp and exp != "—" and exp < _today)
+            color = "#f87171" if expired else "#86efac"
+            st.markdown(
+                f"<div style='background:#13151d;border:1px solid #1e2130;"
+                f"border-left:3px solid {color};border-radius:8px;"
+                f"padding:8px 14px;margin-bottom:4px;font-size:.8rem;'>"
+                f"<b style='color:#e8eaf0;'>{esc(_safe_get(p, 'num_passeport'))}</b> "
+                f"<span style='color:#64748b;'>· {esc(_safe_get(p, 'nationalite', ''))}"
+                f" · émis le {esc(_format_date_fr(_safe_get(p, 'date_emission', ''))) }"
+                f" · expire le <span style='color:{color};'>"
+                f"{esc(_format_date_fr(exp))}</span>"
+                f"{' (EXPIRÉ)' if expired else ''}</span></div>",
+                unsafe_allow_html=True)
+
+    # ── Voyages : la card riche existante fait le travail ─────────────────────
+    voy = data["voyages"]
+    if not voy.empty:
+        st.markdown("<div style='margin:14px 0 4px;color:#94a3b8;font-size:.72rem;"
+                    "text-transform:uppercase;letter-spacing:1px;"
+                    "font-family:JetBrains Mono,monospace;'>✈️ Historique des voyages"
+                    f" ({len(voy)})</div>", unsafe_allow_html=True)
+        st.dataframe(voy, width="stretch", hide_index=True)
+    else:
+        st.markdown("<div style='color:#475569;font-style:italic;font-size:.8rem;'>"
+                    "Aucun voyage enregistré.</div>", unsafe_allow_html=True)
+
+
 def _init_history_table(conn) -> None:
     """Crée la table _app_history si elle n'existe pas encore."""
     conn.execute("""
@@ -4310,6 +4990,351 @@ def render_table_summary(table_name: str, columns: list, labels_map: dict) -> No
     st.markdown(header_html + rows_html + "</div>", unsafe_allow_html=True)
 
 
+def _render_fiches_tab(df, has_nom, has_prenom, has_dest,
+                       has_client_nom, has_client_id):
+    """
+    Onglet « Fiches » : vues client (groupée / simple / destination) et vue
+    voyage, avec pagination, bouton global d'enrichissement API et accès à
+    la fiche 360°. Extrait de run_app pour la lisibilité.
+    """
+    _id_col     = _find_col(df, "id", "clients_id")
+    _statut_col = _find_col(df, "statut", "clients_statut")
+
+    # ── Helper de pagination ──────────────────────────────────────────
+    def _render_load_more(total: int, scope_key: str) -> None:
+        """Affiche un bouton 'Charger les 100 suivants' + un compteur.
+        `total` est le nombre total d'éléments dans la vue courante.
+        `scope_key` rend la key du bouton unique par vue.
+        """
+        visible = min(st.session_state.fiches_visible, total)
+        st.markdown(
+            "<div style='display:flex;justify-content:center;align-items:center;"
+            "gap:14px;margin:18px 0 4px;color:#94a3b8;font-size:.82rem;"
+            "font-family:JetBrains Mono,monospace;'>"
+            f"<span>📄 Affichage <b style='color:#a5f3fc;'>{visible}</b> "
+            f"sur <b style='color:#86efac;'>{total}</b></span>"
+            "</div>",
+            unsafe_allow_html=True)
+        if visible < total:
+            remaining   = total - visible
+            next_chunk  = min(100, remaining)
+            if st.button(
+                f"⬇ Charger les {next_chunk} suivantes  ({remaining} restantes)",
+                key=f"load_more_{scope_key}",
+                use_container_width=True,
+            ):
+                st.session_state.fiches_visible += 100
+                st.rerun()
+
+    # ── Toggle vue (toujours visible) ─────────────────────────────────
+    _prev_view = st.session_state.get("_tab2_view_prev", "client")
+    _sel  = st.radio(
+        "Vue", ["👤  Client", "✈️  Voyage"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="tab2_view_radio",
+    )
+    _view = "voyage" if "Voyage" in _sel else "client"
+    if _view != _prev_view:
+        st.session_state.fiches_visible = 100   # reset pagination
+        st.session_state["_tab2_view_prev"] = _view
+
+    # Préchargement des compagnons (voyages de groupe)
+    try:
+        _all_voy = _get_db().read_sql("""
+            SELECT v.groupe_voyage_id, v.client_id,
+                   c.nom, c.prenom, c.profession, c.ville, c.statut
+            FROM voyages v
+            JOIN clients c ON v.client_id = c.id
+            WHERE v.groupe_voyage_id IS NOT NULL
+        """)
+    except Exception:
+        _all_voy = None
+
+    # Passeports — uniquement pour les clients présents dans les résultats
+    _all_pp = None
+    _pp_id  = _id_col or _find_col(df, "client_id")
+    if _pp_id and _pp_id in df.columns:
+        try:
+            _cids = (df[_pp_id].dropna()
+                     .apply(lambda x: str(int(float(x))))
+                     .unique().tolist())
+            if _cids:
+                _all_pp = _get_db().read_sql(
+                    f"SELECT * FROM passeports WHERE client_id IN ({','.join(_cids)})"
+                )
+        except Exception:
+            _all_pp = None
+
+    # ── BOUTON GLOBAL D'ENRICHISSEMENT (vue Client uniquement) ────────
+    if _view == "client" and _id_col and _id_col in df.columns:
+        # Collecte des client_ids uniques visibles (selon la pagination)
+        _enrich_snapshots = collect_enrich_snapshots(
+            df, _id_col, st.session_state.fiches_visible
+        )
+
+        # Combien sont à enrichir (= pas encore dans le store) ?
+        with _enrich_lock:
+            _todo = sum(1 for cid, _ in _enrich_snapshots
+                        if cid not in _enrich_store)
+        _batch = get_batch_state()
+
+        # ── Barre d'enrichissement (bouton + progression live) ──────
+        # NOTE : run_every doit être CONSTANT car le décorateur est figé
+        # au moment de la définition de la fonction. Si on faisait
+        # `run_every="0.8s" if running else None`, le fragment ne
+        # pollerait jamais après le clic (car running=False au moment
+        # où le décorateur est évalué).
+        @st.fragment(run_every="0.8s")
+        def _render_global_enrich_bar(snapshots=_enrich_snapshots, todo=_todo):
+            bstate = get_batch_state()
+
+            # ── Détection : batch tout juste terminé → force un rerun ──
+            # global pour afficher les badges de traduction dans les cards
+            if (not bstate["running"]
+                    and st.session_state.get("_batch_pending_refresh")):
+                st.session_state["_batch_pending_refresh"] = False
+                st.rerun(scope="app")
+
+            if bstate["running"]:
+                # Progression live
+                done  = bstate["done"]
+                total = bstate["total"]
+                pct   = int(100 * done / total) if total else 100
+                st.markdown(
+                    f"<div style='background:linear-gradient(135deg,#0f1118,#13151d);"
+                    f"border:1px solid #2a2d3e;border-left:3px solid #a78bfa;"
+                    f"border-radius:10px;padding:10px 14px;margin:6px 0 12px;"
+                    f"font-family:JetBrains Mono,monospace;'>"
+                    f"<div style='display:flex;justify-content:space-between;"
+                    f"align-items:center;gap:10px;font-size:.78rem;color:#94a3b8;'>"
+                    f"<span>✨ Enrichissement en cours… "
+                    f"<b style='color:#a5f3fc;'>{done}</b>"
+                    f"<span style='opacity:.6;'> / {total}</span></span>"
+                    f"<span style='color:#86efac;'>{pct} %</span></div>"
+                    f"<div style='margin-top:6px;background:#1e2130;height:4px;"
+                    f"border-radius:2px;overflow:hidden;'>"
+                    f"<div style='width:{pct}%;height:100%;"
+                    f"background:linear-gradient(90deg,#a78bfa,#86efac);"
+                    f"transition:width .4s ease;'></div></div></div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                # Bouton de déclenchement
+                if todo == 0:
+                    zc1, zc2 = st.columns([5, 1])
+                    with zc1:
+                        st.markdown(
+                            "<div style='color:#475569;font-size:.78rem;font-style:italic;"
+                            "font-family:JetBrains Mono,monospace;margin:6px 0 12px;'>"
+                            "✓ Toutes les fiches visibles sont déjà enrichies.</div>",
+                            unsafe_allow_html=True,
+                        )
+                    with zc2:
+                        if st.button(
+                            "🗑 Cache",
+                            key="purge_enrich_cache_zero",
+                            use_container_width=True,
+                            help="Vider tout le cache de traductions (RAM + DB persistante)",
+                        ):
+                            purge_enrichment_caches()
+                            st.rerun(scope="app")
+                else:
+                    _marker = "global-enrich-trigger"
+                    st.markdown(
+                        f'<div id="{_marker}"></div><style>'
+                        f'div.element-container:has(#{_marker})+div.element-container button {{'
+                        f'background:linear-gradient(135deg,#a78bfa22,#86efac22) !important;'
+                        f'color:#e8eaf0 !important;'
+                        f'border:1px solid #a78bfa !important; border-radius:8px !important;'
+                        f'font-family:"JetBrains Mono",monospace !important;'
+                        f'font-size:.82rem !important; font-weight:600 !important;'
+                        f'padding:10px 18px !important;'
+                        f'}}'
+                        f'div.element-container:has(#{_marker})+div.element-container button:hover {{'
+                        f'background:linear-gradient(135deg,#a78bfa44,#86efac44) !important;'
+                        f'box-shadow:0 0 16px #a78bfa66 !important;'
+                        f'}}</style>',
+                        unsafe_allow_html=True,
+                    )
+                    bcol1, bcol2 = st.columns([5, 1])
+                    with bcol1:
+                        if st.button(
+                            f"✨ Enrichir toutes les fiches  ·  {todo} à traiter",
+                            key="global_enrich_btn",
+                            use_container_width=True,
+                            help="Lance les appels API en série, 1 fiche à la fois",
+                        ):
+                            if start_batch_enrichment(snapshots):
+                                # Marqueur pour qu'à la fin du batch on
+                                # rerun toute l'app et que les badges
+                                # de traduction apparaissent dans les cards
+                                st.session_state["_batch_pending_refresh"] = True
+                                st.rerun(scope="fragment")
+                    with bcol2:
+                        if st.button(
+                            "🗑 Cache",
+                            key="purge_enrich_cache",
+                            use_container_width=True,
+                            help="Vider tout le cache de traductions (RAM + DB persistante)",
+                        ):
+                            purge_enrichment_caches()
+                            st.rerun(scope="app")
+
+        _render_global_enrich_bar()
+
+    # ── VUE CLIENT ────────────────────────────────────────────────────
+    if _view == "client":
+        if has_nom and has_prenom and has_dest and _id_col:
+            _groups       = list(df.groupby(_id_col, sort=False))
+            _total        = len(_groups)
+            _limit        = st.session_state.fiches_visible
+            for client_id, group in _groups[:_limit]:
+                _id_raw = group.iloc[0].get(_id_col)
+                _ck     = normalize_client_id(_id_raw)
+                if _all_pp is not None and _ck is not None:
+                    try:
+                        _pp = _all_pp[_all_pp["client_id"].astype(str) == str(_ck)]
+                    except Exception:
+                        _pp = None
+                else:
+                    _pp = None
+                render_client_profile_card(
+                    client_row=group.iloc[0],
+                    voyages_df=group,
+                    all_voyages_df=_all_voy,
+                    passeports_df=_pp,
+                    col_id=_id_col,
+                    translations=get_translations_for(_ck),
+                )
+            _render_load_more(_total, "client_grouped")
+
+        elif has_nom and has_prenom:
+            _total = len(df)
+            _limit = st.session_state.fiches_visible
+            _df_slice = df.iloc[:_limit]
+            cols_grid = st.columns(2)
+            _seen_cids = set()   # pour ne rendre le bloc enrich qu'une fois par client
+            for i, (_, row) in enumerate(_df_slice.iterrows()):
+                _s_val     = row.get(_statut_col) if _statut_col else None
+                stat_color = "#4ade80" if str(_s_val or "") == "actif" else "#f87171"
+                initials   = esc((str(row.get("prenom", "?"))[:1] + str(row.get("nom", "?"))[:1]).upper())
+                with cols_grid[i % 2]:
+                    st.markdown(
+                        f"<div style='background:#13151d;border:1px solid #1e2130;"
+                        f"border-radius:12px;padding:16px 18px;margin-bottom:0;"
+                        f"border-bottom-left-radius:0;border-bottom-right-radius:0;'>"
+                        f"<div style='display:flex;align-items:center;gap:12px;'>"
+                        f"<div style='width:40px;height:40px;border-radius:50%;"
+                        f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
+                        f"display:flex;align-items:center;justify-content:center;"
+                        f"font-weight:700;color:white;'>{initials}</div>"
+                        f"<div><div style='font-weight:600;color:#e8eaf0;'>"
+                        f"{esc(row.get('prenom',''))} {esc(row.get('nom',''))}</div>"
+                        f"<div style='font-size:.8rem;color:#64748b;'>"
+                        f"{esc(row.get('ville',''))} &nbsp;·&nbsp; "
+                        f"<span style='color:{stat_color};'>{esc(row.get('statut',''))}</span>"
+                        f"</div></div></div></div>",
+                        unsafe_allow_html=True)
+
+                    # ── Bloc enrichissement API (1 fois max par client) ──
+                    _cid_raw = row.get(_id_col) if _id_col else row.get("id")
+                    _cid_key = normalize_client_id(_cid_raw)
+
+                    if _cid_key is not None and _cid_key not in _seen_cids:
+                        _seen_cids.add(_cid_key)
+                        _snapshot = {
+                            "id":     _cid_key,
+                            "nom":    str(row.get("nom", "")),
+                            "prenom": str(row.get("prenom", "")),
+                            "email":  str(row.get("email", "")),
+                            "ville":  str(row.get("ville", "")),
+                        }
+                        _sb1, _sb2 = st.columns([3, 1])
+                        with _sb1:
+                            render_client_enrichment_block(_cid_key, _snapshot)
+                        with _sb2:
+                            if st.button("👤 360°", key=f"open_c360_s_{_cid_key}",
+                                         use_container_width=True,
+                                         help="Ouvrir la fiche complète"):
+                                st.session_state["selected_client_id"] = _cid_key
+                                st.rerun()
+
+                    # Fermeture visuelle de la carte (ligne du bas arrondie)
+                    st.markdown(
+                        "<div style='background:#13151d;border:1px solid #1e2130;"
+                        "border-top:none;border-radius:0 0 12px 12px;height:6px;"
+                        "margin-bottom:12px;'></div>",
+                        unsafe_allow_html=True)
+            _render_load_more(_total, "client_simple")
+
+        elif has_dest:
+            _total = len(df)
+            _limit = st.session_state.fiches_visible
+            _df_slice = df.iloc[:_limit]
+            cols_grid = st.columns(2)
+            for i, (_, row) in enumerate(_df_slice.iterrows()):
+                cont     = row.get("continent", "")
+                tv       = row.get("type_voyage", "")
+                cont_col = CONT_COLORS.get(cont, "#6b7280")
+                tv_col   = TYPE_COLORS.get(tv,   "#6b7280")
+                note_v   = row.get("note", None)
+                stars    = ("⭐" * int(note_v)) if note_v and not pd.isna(note_v) else "—"
+                cnom     = ""
+                if has_client_nom:
+                    cnom = f"{row.get('client_prenom','')} {row.get('client_nom','')}".strip()
+                elif has_client_id:
+                    cnom = f"Client #{int(row.get('client_id', 0))}"
+                cols_grid[i % 2].markdown(
+                    f"<div style='background:#13151d;border:1px solid #1e2130;"
+                    f"border-top:3px solid {cont_col};"
+                    f"border-radius:12px;padding:16px 18px;margin-bottom:12px;'>"
+                    f"<div style='display:flex;justify-content:space-between;align-items:start;'>"
+                    f"<div><div style='font-weight:700;font-size:1rem;color:#e8eaf0;'>"
+                    f"{row.get('destination','')}</div>"
+                    f"<div style='font-size:.78rem;color:#64748b;'>"
+                    f"{row.get('pays_destination','')} · "
+                    f"<span style='color:{cont_col};'>{cont}</span></div></div>"
+                    f"<span style='background:{tv_col}22;color:{tv_col};"
+                    f"font-size:.7rem;padding:3px 10px;border-radius:10px;"
+                    f"white-space:nowrap;'>{tv}</span></div>"
+                    f"<div style='margin:10px 0;font-size:.8rem;color:#94a3b8;'>"
+                    f"📅 {str(row.get('date_depart',''))[:10]} → "
+                    f"{str(row.get('date_retour',''))[:10]}"
+                    f"{'&nbsp;&nbsp;·&nbsp;&nbsp;🕒 ' + str(row.get('duree_jours','')) + 'j' if row.get('duree_jours') else ''}"
+                    f"{'&nbsp;&nbsp;·&nbsp;&nbsp;' + cnom if cnom else ''}</div>"
+                    f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
+                    f"<span style='color:#64748b;font-size:.78rem;'>🏨 {row.get('hotel','')}</span>"
+                    f"<div style='text-align:right;'>"
+                    f"<div style='color:#4ade80;font-weight:700;"
+                    f"font-family:JetBrains Mono,monospace;'>"
+                    f"{int(row.get('budget', 0)):,}€</div>"
+                    f"<div style='font-size:.75rem;'>{stars}</div>"
+                    f"</div></div></div>",
+                    unsafe_allow_html=True)
+            _render_load_more(_total, "client_dest")
+        else:
+            st.info("Aucune vue fiche disponible pour ces colonnes.")
+
+    # ── VUE VOYAGE ────────────────────────────────────────────────────
+    else:
+        if has_dest:
+            _total = len(df)
+            _limit = st.session_state.fiches_visible
+            _df_slice = df.iloc[:_limit]
+            for _, vrow in _df_slice.iterrows():
+                render_voyage_profile_card(
+                    voyage_row=vrow,
+                    all_voyages_df=_all_voy,
+                    col_statut_client=_statut_col or "statut",
+                    show_client_info=False,
+                )
+            _render_load_more(_total, "voyage")
+        else:
+            st.info("La vue Voyage nécessite une colonne destination.")
+
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # POINT D'ENTRÉE UNIQUE
 # ══════════════════════════════════════════════════════════════════════════════
@@ -4363,8 +5388,9 @@ def run_app(schema: dict, enrich: dict):
         except Exception as _e:
             st.error(f"Erreur SQL (relance) : {_e}")
 
-    # ── En-tête + popover historique (top-right) ──────────────────────────────
-    col_hdr, col_cfg, col_pop = st.columns([5, 2, 1], vertical_alignment="bottom")
+    # ── En-tête + popovers favoris/historique (top-right) ─────────────────────
+    _init_favorites_table(conn)
+    col_hdr, col_cfg, col_fav, col_pop = st.columns([5, 2, 1, 1], vertical_alignment="bottom")
     with col_hdr:
         st.markdown("# 🔍 SQL Query Builder")
         st.markdown("<p style='color:#6b7280;margin-top:-14px;margin-bottom:20px;'>"
@@ -4381,6 +5407,8 @@ def run_app(schema: dict, enrich: dict):
                      use_container_width=True):
             st.cache_data.clear()
             st.rerun()
+    with col_fav:
+        _render_favorites_popover(conn, user_id)
     with col_pop:
         _render_history_popover(conn, user_id, enrich)
 
@@ -4866,11 +5894,21 @@ def run_app(schema: dict, enrich: dict):
         has_ville      = "ville"         in df.columns
         has_client_id  = "client_id"     in df.columns
 
-        tab1, tab2, tab3, tab4 = st.tabs(["📋 Grille", "👤 Fiches", "🗓 Timeline", "📈 Statistiques"])
+        # ── Tabs (dynamiques : un onglet 👤 Client apparaît si sélection) ─────
+        _sel_cid = st.session_state.get("selected_client_id")
+        if _sel_cid is not None:
+            tab1, tab2, tab3, tab4, tab_client = st.tabs(
+                ["📋 Grille", "👤 Fiches", "🗓 Timeline", "📈 Statistiques",
+                 f"⭐ Client #{_sel_cid}"])
+        else:
+            tab1, tab2, tab3, tab4 = st.tabs(
+                ["📋 Grille", "👤 Fiches", "🗓 Timeline", "📈 Statistiques"])
+            tab_client = None
 
         # ── TAB 1 — Grille ────────────────────────────────────────────────────
         with tab1:
-            st.caption("💡 Cliquez sur une cellule pour explorer sa valeur.")
+            st.caption("💡 Cliquez sur une cellule pour explorer sa valeur, "
+                       "ou sélectionnez une ligne pour ouvrir la fiche client.")
             event  = st.dataframe(df, width="stretch", hide_index=True,
                                   on_select="rerun", selection_mode=["single-row", "single-column"],
                                   key="result_df")
@@ -4889,449 +5927,39 @@ def run_app(schema: dict, enrich: dict):
                 if click_sig != st.session_state.get("_last_cell_click"):
                     st.session_state["_last_cell_click"]     = click_sig
                     st.session_state["_cell_dialog_pending"] = (col_name, cell_val)
+
+            # ── Ligne sélectionnée → proposer d'ouvrir la fiche client ────────
+            if rows_s:
+                _row_idx  = int(rows_s[0])
+                _grid_id_col = _find_col(df, "clients_id", "client_id", "id")
+                _row_cid  = (normalize_client_id(df.iloc[_row_idx].get(_grid_id_col))
+                             if _grid_id_col else None)
+                # Heuristique : sur la table voyages/passeports, "id" est l'id de
+                # la ligne, pas du client — client_id/clients_id sont prioritaires
+                if _row_cid is not None and isinstance(_row_cid, int):
+                    _gnom = df.iloc[_row_idx].get(_find_col(df, "nom", "clients_nom") or "", "")
+                    if st.button(
+                        f"👤 Ouvrir la fiche du client #{_row_cid}"
+                        + (f" — {_gnom}" if _gnom and str(_gnom) != "nan" else ""),
+                        key="open_c360_from_grid",
+                        type="primary",
+                    ):
+                        st.session_state["selected_client_id"] = _row_cid
+                        st.rerun()
+
             st.download_button("⬇ Télécharger CSV",
                 df.to_csv(index=False).encode("utf-8"),
                 f"resultats_{current_table}.csv", "text/csv")
 
+        # ── TAB CLIENT 360° (si sélection active) ─────────────────────────────
+        if tab_client is not None:
+            with tab_client:
+                render_client_360(_sel_cid, conn, user_id)
+
         # ── TAB 2 — Fiches ────────────────────────────────────────────────────
         with tab2:
-            _id_col     = _find_col(df, "id", "clients_id")
-            _statut_col = _find_col(df, "statut", "clients_statut")
-
-            # ── Helper de pagination ──────────────────────────────────────────
-            def _render_load_more(total: int, scope_key: str) -> None:
-                """Affiche un bouton 'Charger les 100 suivants' + un compteur.
-                `total` est le nombre total d'éléments dans la vue courante.
-                `scope_key` rend la key du bouton unique par vue.
-                """
-                visible = min(st.session_state.fiches_visible, total)
-                st.markdown(
-                    "<div style='display:flex;justify-content:center;align-items:center;"
-                    "gap:14px;margin:18px 0 4px;color:#94a3b8;font-size:.82rem;"
-                    "font-family:JetBrains Mono,monospace;'>"
-                    f"<span>📄 Affichage <b style='color:#a5f3fc;'>{visible}</b> "
-                    f"sur <b style='color:#86efac;'>{total}</b></span>"
-                    "</div>",
-                    unsafe_allow_html=True)
-                if visible < total:
-                    remaining   = total - visible
-                    next_chunk  = min(100, remaining)
-                    if st.button(
-                        f"⬇ Charger les {next_chunk} suivantes  ({remaining} restantes)",
-                        key=f"load_more_{scope_key}",
-                        use_container_width=True,
-                    ):
-                        st.session_state.fiches_visible += 100
-                        st.rerun()
-
-            # ── Toggle vue (toujours visible) ─────────────────────────────────
-            _prev_view = st.session_state.get("_tab2_view_prev", "client")
-            _sel  = st.radio(
-                "Vue", ["👤  Client", "✈️  Voyage"],
-                horizontal=True,
-                label_visibility="collapsed",
-                key="tab2_view_radio",
-            )
-            _view = "voyage" if "Voyage" in _sel else "client"
-            if _view != _prev_view:
-                st.session_state.fiches_visible = 100   # reset pagination
-                st.session_state["_tab2_view_prev"] = _view
-
-            # Préchargement des compagnons (voyages de groupe)
-            try:
-                _all_voy = _get_db().read_sql("""
-                    SELECT v.groupe_voyage_id, v.client_id,
-                           c.nom, c.prenom, c.profession, c.ville, c.statut
-                    FROM voyages v
-                    JOIN clients c ON v.client_id = c.id
-                    WHERE v.groupe_voyage_id IS NOT NULL
-                """)
-            except Exception:
-                _all_voy = None
-
-            # Passeports — uniquement pour les clients présents dans les résultats
-            _all_pp = None
-            _pp_id  = _id_col or _find_col(df, "client_id")
-            if _pp_id and _pp_id in df.columns:
-                try:
-                    _cids = (df[_pp_id].dropna()
-                             .apply(lambda x: str(int(float(x))))
-                             .unique().tolist())
-                    if _cids:
-                        _all_pp = _get_db().read_sql(
-                            f"SELECT * FROM passeports WHERE client_id IN ({','.join(_cids)})"
-                        )
-                except Exception:
-                    _all_pp = None
-
-            # ── BOUTON GLOBAL D'ENRICHISSEMENT (vue Client uniquement) ────────
-            if _view == "client" and _id_col and _id_col in df.columns:
-                # Collecte des client_ids uniques visibles (selon la pagination)
-                _limit_for_enrich = st.session_state.fiches_visible
-                # Pour la vue groupée, on prend les N premiers groupes ; pour la
-                # vue simple, on prend les N premières lignes uniques par id
-                _unique_df = (df.drop_duplicates(subset=[_id_col])
-                                .iloc[:_limit_for_enrich])
-
-                _enrich_snapshots = []
-                for _, _r in _unique_df.iterrows():
-                    try:
-                        _cid_raw = _r.get(_id_col)
-                        # Filtrer les NaN/None/vides proprement
-                        if _cid_raw is None:
-                            continue
-                        try:
-                            if pd.isna(_cid_raw):
-                                continue
-                        except (TypeError, ValueError):
-                            pass  # ce n'est pas NaN-comparable, on continue
-                        try:
-                            _cid_key = int(float(_cid_raw))
-                        except (TypeError, ValueError):
-                            _s = str(_cid_raw).strip()
-                            if not _s or _s.lower() == "nan":
-                                continue
-                            _cid_key = _s
-
-                        # Collecter les destinations et types_voyage du client depuis le df complet
-                        # On utilise pd.notna pour le masque (plus robuste que == pour NaN)
-                        try:
-                            _client_rows = df[df[_id_col].apply(
-                                lambda x: x == _cid_raw if pd.notna(x) else False
-                            )]
-                        except Exception:
-                            _client_rows = df[df[_id_col] == _cid_raw]
-                        _destinations = []
-                        _types_voyage = []
-
-                        # Recherche tolérante des colonnes (avec/sans préfixe de jointure)
-                        def _find_col_safe(*names):
-                            for n in names:
-                                if n in df.columns: return n
-                            # Essayer avec préfixes voyages_*, clients_*
-                            for n in names:
-                                for prefix in ("voyages_", "clients_", "affectations_"):
-                                    if (prefix + n) in df.columns:
-                                        return prefix + n
-                            return None
-
-                        _c_dest = _find_col_safe("destination")
-                        _c_pays = _find_col_safe("pays_destination", "pays")
-                        _c_tv   = _find_col_safe("type_voyage")
-
-                        if _c_dest:
-                            _destinations += [str(v) for v in _client_rows[_c_dest].dropna().unique() if str(v).strip()]
-                        if _c_pays:
-                            _destinations += [str(v) for v in _client_rows[_c_pays].dropna().unique() if str(v).strip()]
-                        if _c_tv:
-                            _types_voyage = [str(v) for v in _client_rows[_c_tv].dropna().unique() if str(v).strip()]
-
-                        # Pareil pour les champs client (peuvent être préfixés)
-                        _c_nom    = _find_col_safe("nom")
-                        _c_prenom = _find_col_safe("prenom")
-                        _c_email  = _find_col_safe("email")
-                        _c_ville  = _find_col_safe("ville")
-                        _c_prof   = _find_col_safe("profession")
-                        _c_sit    = _find_col_safe("situation_pro")
-
-                        _enrich_snapshots.append((_cid_key, {
-                            "id":            _cid_key,
-                            "nom":           str(_r.get(_c_nom, "") if _c_nom else "") or "",
-                            "prenom":        str(_r.get(_c_prenom, "") if _c_prenom else "") or "",
-                            "email":         str(_r.get(_c_email, "") if _c_email else "") or "",
-                            "ville":         str(_r.get(_c_ville, "") if _c_ville else "") or "",
-                            "profession":    str(_r.get(_c_prof, "") if _c_prof else "") or "",
-                            "situation_pro": str(_r.get(_c_sit, "") if _c_sit else "") or "",
-                            "destinations":  list(set(_destinations)),
-                            "types_voyage":  list(set(_types_voyage)),
-                        }))
-                    except Exception as _exc:
-                        # Snapshot loupé pour ce client — on continue avec les autres
-                        # plutôt que de planter toute la page
-                        import sys
-                        print(f"[enrich] Snapshot loupé : {_exc}", file=sys.stderr)
-                        continue
-
-                # Combien sont à enrichir (= pas encore dans le store) ?
-                with _enrich_lock:
-                    _todo = sum(1 for cid, _ in _enrich_snapshots
-                                if cid not in _enrich_store)
-                _batch = get_batch_state()
-
-                # ── Barre d'enrichissement (bouton + progression live) ──────
-                # NOTE : run_every doit être CONSTANT car le décorateur est figé
-                # au moment de la définition de la fonction. Si on faisait
-                # `run_every="0.8s" if running else None`, le fragment ne
-                # pollerait jamais après le clic (car running=False au moment
-                # où le décorateur est évalué).
-                @st.fragment(run_every="0.8s")
-                def _render_global_enrich_bar(snapshots=_enrich_snapshots, todo=_todo):
-                    bstate = get_batch_state()
-
-                    # ── Détection : batch tout juste terminé → force un rerun ──
-                    # global pour afficher les badges de traduction dans les cards
-                    if (not bstate["running"]
-                            and st.session_state.get("_batch_pending_refresh")):
-                        st.session_state["_batch_pending_refresh"] = False
-                        st.rerun(scope="app")
-
-                    if bstate["running"]:
-                        # Progression live
-                        done  = bstate["done"]
-                        total = bstate["total"]
-                        pct   = int(100 * done / total) if total else 100
-                        st.markdown(
-                            f"<div style='background:linear-gradient(135deg,#0f1118,#13151d);"
-                            f"border:1px solid #2a2d3e;border-left:3px solid #a78bfa;"
-                            f"border-radius:10px;padding:10px 14px;margin:6px 0 12px;"
-                            f"font-family:JetBrains Mono,monospace;'>"
-                            f"<div style='display:flex;justify-content:space-between;"
-                            f"align-items:center;gap:10px;font-size:.78rem;color:#94a3b8;'>"
-                            f"<span>✨ Enrichissement en cours… "
-                            f"<b style='color:#a5f3fc;'>{done}</b>"
-                            f"<span style='opacity:.6;'> / {total}</span></span>"
-                            f"<span style='color:#86efac;'>{pct} %</span></div>"
-                            f"<div style='margin-top:6px;background:#1e2130;height:4px;"
-                            f"border-radius:2px;overflow:hidden;'>"
-                            f"<div style='width:{pct}%;height:100%;"
-                            f"background:linear-gradient(90deg,#a78bfa,#86efac);"
-                            f"transition:width .4s ease;'></div></div></div>",
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        # Bouton de déclenchement
-                        if todo == 0:
-                            zc1, zc2 = st.columns([5, 1])
-                            with zc1:
-                                st.markdown(
-                                    "<div style='color:#475569;font-size:.78rem;font-style:italic;"
-                                    "font-family:JetBrains Mono,monospace;margin:6px 0 12px;'>"
-                                    "✓ Toutes les fiches visibles sont déjà enrichies.</div>",
-                                    unsafe_allow_html=True,
-                                )
-                            with zc2:
-                                if st.button(
-                                    "🗑 Cache",
-                                    key="purge_enrich_cache_zero",
-                                    use_container_width=True,
-                                    help="Vider le cache pour pouvoir re-enrichir",
-                                ):
-                                    with _enrich_lock:
-                                        _enrich_store.clear()
-                                    with _batch_lock:
-                                        _batch_state["done"]    = 0
-                                        _batch_state["total"]   = 0
-                                    st.rerun(scope="app")
-                        else:
-                            _marker = "global-enrich-trigger"
-                            st.markdown(
-                                f'<div id="{_marker}"></div><style>'
-                                f'div.element-container:has(#{_marker})+div.element-container button {{'
-                                f'background:linear-gradient(135deg,#a78bfa22,#86efac22) !important;'
-                                f'color:#e8eaf0 !important;'
-                                f'border:1px solid #a78bfa !important; border-radius:8px !important;'
-                                f'font-family:"JetBrains Mono",monospace !important;'
-                                f'font-size:.82rem !important; font-weight:600 !important;'
-                                f'padding:10px 18px !important;'
-                                f'}}'
-                                f'div.element-container:has(#{_marker})+div.element-container button:hover {{'
-                                f'background:linear-gradient(135deg,#a78bfa44,#86efac44) !important;'
-                                f'box-shadow:0 0 16px #a78bfa66 !important;'
-                                f'}}</style>',
-                                unsafe_allow_html=True,
-                            )
-                            bcol1, bcol2 = st.columns([5, 1])
-                            with bcol1:
-                                if st.button(
-                                    f"✨ Enrichir toutes les fiches  ·  {todo} à traiter",
-                                    key="global_enrich_btn",
-                                    use_container_width=True,
-                                    help="Lance les appels API en série, 1 fiche à la fois",
-                                ):
-                                    if start_batch_enrichment(snapshots):
-                                        # Marqueur pour qu'à la fin du batch on
-                                        # rerun toute l'app et que les badges
-                                        # de traduction apparaissent dans les cards
-                                        st.session_state["_batch_pending_refresh"] = True
-                                        st.rerun(scope="fragment")
-                            with bcol2:
-                                if st.button(
-                                    "🗑 Cache",
-                                    key="purge_enrich_cache",
-                                    use_container_width=True,
-                                    help="Vider le cache des enrichissements (toutes les fiches reviennent en FR)",
-                                ):
-                                    with _enrich_lock:
-                                        _enrich_store.clear()
-                                    with _batch_lock:
-                                        _batch_state["done"]    = 0
-                                        _batch_state["total"]   = 0
-                                    st.rerun(scope="app")
-
-                _render_global_enrich_bar()
-
-            # ── VUE CLIENT ────────────────────────────────────────────────────
-            if _view == "client":
-                if has_nom and has_prenom and has_dest and _id_col:
-                    _groups       = list(df.groupby(_id_col, sort=False))
-                    _total        = len(_groups)
-                    _limit        = st.session_state.fiches_visible
-                    for client_id, group in _groups[:_limit]:
-                        if _all_pp is not None:
-                            try:
-                                _cid = str(int(float(group.iloc[0].get(_id_col) or 0)))
-                                _pp  = _all_pp[_all_pp["client_id"].astype(str) == _cid]
-                            except Exception:
-                                _pp = None
-                        else:
-                            _pp = None
-                        # Récupérer les traductions si l'enrichissement est terminé
-                        # (même logique de _cid_key que la collecte du batch)
-                        _id_raw = group.iloc[0].get(_id_col)
-                        _ck = None
-                        if _id_raw is not None and not (
-                            isinstance(_id_raw, float) and pd.isna(_id_raw)
-                        ):
-                            try:
-                                _ck = int(float(_id_raw))
-                            except (TypeError, ValueError):
-                                if str(_id_raw).strip() and str(_id_raw).lower() != "nan":
-                                    _ck = str(_id_raw)
-                        _tx = None
-                        if _ck is not None:
-                            _state = get_enrichment_state(_ck)
-                            if _state["status"] == "done":
-                                _tx = (_state.get("data") or {}).get("translations")
-                        render_client_profile_card(
-                            client_row=group.iloc[0],
-                            voyages_df=group,
-                            all_voyages_df=_all_voy,
-                            passeports_df=_pp,
-                            col_id=_id_col,
-                            translations=_tx,
-                        )
-                    _render_load_more(_total, "client_grouped")
-
-                elif has_nom and has_prenom:
-                    _total = len(df)
-                    _limit = st.session_state.fiches_visible
-                    _df_slice = df.iloc[:_limit]
-                    cols_grid = st.columns(2)
-                    _seen_cids = set()   # pour ne rendre le bloc enrich qu'une fois par client
-                    for i, (_, row) in enumerate(_df_slice.iterrows()):
-                        _s_val     = row.get(_statut_col) if _statut_col else None
-                        stat_color = "#4ade80" if str(_s_val or "") == "actif" else "#f87171"
-                        initials   = (str(row.get("prenom", "?"))[:1] + str(row.get("nom", "?"))[:1]).upper()
-                        with cols_grid[i % 2]:
-                            st.markdown(
-                                f"<div style='background:#13151d;border:1px solid #1e2130;"
-                                f"border-radius:12px;padding:16px 18px;margin-bottom:0;"
-                                f"border-bottom-left-radius:0;border-bottom-right-radius:0;'>"
-                                f"<div style='display:flex;align-items:center;gap:12px;'>"
-                                f"<div style='width:40px;height:40px;border-radius:50%;"
-                                f"background:linear-gradient(135deg,#3b82f6,#7c3aed);"
-                                f"display:flex;align-items:center;justify-content:center;"
-                                f"font-weight:700;color:white;'>{initials}</div>"
-                                f"<div><div style='font-weight:600;color:#e8eaf0;'>"
-                                f"{row.get('prenom','')} {row.get('nom','')}</div>"
-                                f"<div style='font-size:.8rem;color:#64748b;'>"
-                                f"{row.get('ville','')} &nbsp;·&nbsp; "
-                                f"<span style='color:{stat_color};'>{row.get('statut','')}</span>"
-                                f"</div></div></div></div>",
-                                unsafe_allow_html=True)
-
-                            # ── Bloc enrichissement API (1 fois max par client) ──
-                            _cid_raw = row.get(_id_col) if _id_col else row.get("id")
-                            _cid_key = None
-                            if _cid_raw is not None and str(_cid_raw) not in ("", "—", "nan"):
-                                try:
-                                    _cid_key = int(float(_cid_raw))
-                                except (TypeError, ValueError):
-                                    _cid_key = str(_cid_raw)
-
-                            if _cid_key is not None and _cid_key not in _seen_cids:
-                                _seen_cids.add(_cid_key)
-                                _snapshot = {
-                                    "id":     _cid_key,
-                                    "nom":    str(row.get("nom", "")),
-                                    "prenom": str(row.get("prenom", "")),
-                                    "email":  str(row.get("email", "")),
-                                    "ville":  str(row.get("ville", "")),
-                                }
-                                render_client_enrichment_block(_cid_key, _snapshot)
-
-                            # Fermeture visuelle de la carte (ligne du bas arrondie)
-                            st.markdown(
-                                "<div style='background:#13151d;border:1px solid #1e2130;"
-                                "border-top:none;border-radius:0 0 12px 12px;height:6px;"
-                                "margin-bottom:12px;'></div>",
-                                unsafe_allow_html=True)
-                    _render_load_more(_total, "client_simple")
-
-                elif has_dest:
-                    _total = len(df)
-                    _limit = st.session_state.fiches_visible
-                    _df_slice = df.iloc[:_limit]
-                    cols_grid = st.columns(2)
-                    for i, (_, row) in enumerate(_df_slice.iterrows()):
-                        cont     = row.get("continent", "")
-                        tv       = row.get("type_voyage", "")
-                        cont_col = CONT_COLORS.get(cont, "#6b7280")
-                        tv_col   = TYPE_COLORS.get(tv,   "#6b7280")
-                        note_v   = row.get("note", None)
-                        stars    = ("⭐" * int(note_v)) if note_v and not pd.isna(note_v) else "—"
-                        cnom     = ""
-                        if has_client_nom:
-                            cnom = f"{row.get('client_prenom','')} {row.get('client_nom','')}".strip()
-                        elif has_client_id:
-                            cnom = f"Client #{int(row.get('client_id', 0))}"
-                        cols_grid[i % 2].markdown(
-                            f"<div style='background:#13151d;border:1px solid #1e2130;"
-                            f"border-top:3px solid {cont_col};"
-                            f"border-radius:12px;padding:16px 18px;margin-bottom:12px;'>"
-                            f"<div style='display:flex;justify-content:space-between;align-items:start;'>"
-                            f"<div><div style='font-weight:700;font-size:1rem;color:#e8eaf0;'>"
-                            f"{row.get('destination','')}</div>"
-                            f"<div style='font-size:.78rem;color:#64748b;'>"
-                            f"{row.get('pays_destination','')} · "
-                            f"<span style='color:{cont_col};'>{cont}</span></div></div>"
-                            f"<span style='background:{tv_col}22;color:{tv_col};"
-                            f"font-size:.7rem;padding:3px 10px;border-radius:10px;"
-                            f"white-space:nowrap;'>{tv}</span></div>"
-                            f"<div style='margin:10px 0;font-size:.8rem;color:#94a3b8;'>"
-                            f"📅 {str(row.get('date_depart',''))[:10]} → "
-                            f"{str(row.get('date_retour',''))[:10]}"
-                            f"{'&nbsp;&nbsp;·&nbsp;&nbsp;🕒 ' + str(row.get('duree_jours','')) + 'j' if row.get('duree_jours') else ''}"
-                            f"{'&nbsp;&nbsp;·&nbsp;&nbsp;' + cnom if cnom else ''}</div>"
-                            f"<div style='display:flex;justify-content:space-between;align-items:center;'>"
-                            f"<span style='color:#64748b;font-size:.78rem;'>🏨 {row.get('hotel','')}</span>"
-                            f"<div style='text-align:right;'>"
-                            f"<div style='color:#4ade80;font-weight:700;"
-                            f"font-family:JetBrains Mono,monospace;'>"
-                            f"{int(row.get('budget', 0)):,}€</div>"
-                            f"<div style='font-size:.75rem;'>{stars}</div>"
-                            f"</div></div></div>",
-                            unsafe_allow_html=True)
-                    _render_load_more(_total, "client_dest")
-                else:
-                    st.info("Aucune vue fiche disponible pour ces colonnes.")
-
-            # ── VUE VOYAGE ────────────────────────────────────────────────────
-            else:
-                if has_dest:
-                    _total = len(df)
-                    _limit = st.session_state.fiches_visible
-                    _df_slice = df.iloc[:_limit]
-                    for _, vrow in _df_slice.iterrows():
-                        render_voyage_profile_card(
-                            voyage_row=vrow,
-                            all_voyages_df=_all_voy,
-                            col_statut_client=_statut_col or "statut",
-                            show_client_info=False,
-                        )
-                    _render_load_more(_total, "voyage")
-                else:
-                    st.info("La vue Voyage nécessite une colonne destination.")
+            _render_fiches_tab(df, has_nom, has_prenom, has_dest,
+                               has_client_nom, has_client_id)
 
         # ── TAB 3 — Timeline ──────────────────────────────────────────────────
         with tab3:
