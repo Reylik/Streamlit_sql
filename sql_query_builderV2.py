@@ -2394,32 +2394,182 @@ def _do_client_enrichment(client_id, snapshot: dict) -> dict:
         "Professionnel":       "Professional",
         "famille":             "family",
         "Famille":             "Family",
-        # Destinations / pays (mêmes noms ou variants)
-        "Maroc":               "Morocco",
+        # Destinations / pays — liste élargie pour couvrir plus de cas
+        # ── Europe ──
+        "France":              "France",
         "Espagne":             "Spain",
         "Italie":              "Italy",
         "Allemagne":           "Germany",
         "Royaume-Uni":         "United Kingdom",
+        "Angleterre":          "England",
         "Grèce":               "Greece",
         "Belgique":            "Belgium",
         "Suisse":              "Switzerland",
         "Pays-Bas":            "Netherlands",
-        "États-Unis":          "United States",
-        "Égypte":              "Egypt",
+        "Hollande":            "Netherlands",
+        "Luxembourg":          "Luxembourg",
+        "Portugal":            "Portugal",
+        "Pologne":             "Poland",
+        "Norvège":             "Norway",
+        "Suède":               "Sweden",
+        "Finlande":            "Finland",
+        "Danemark":            "Denmark",
+        "Irlande":             "Ireland",
+        "Islande":             "Iceland",
+        "Autriche":            "Austria",
+        "Hongrie":             "Hungary",
+        "République tchèque":  "Czech Republic",
+        "Tchéquie":            "Czechia",
+        "Slovaquie":           "Slovakia",
+        "Slovénie":            "Slovenia",
+        "Croatie":             "Croatia",
+        "Roumanie":            "Romania",
+        "Bulgarie":            "Bulgaria",
+        "Serbie":               "Serbia",
+        "Bosnie-Herzégovine":  "Bosnia and Herzegovina",
+        "Albanie":             "Albania",
+        "Macédoine du Nord":   "North Macedonia",
+        "Monténégro":          "Montenegro",
+        "Estonie":             "Estonia",
+        "Lettonie":            "Latvia",
+        "Lituanie":            "Lithuania",
+        "Ukraine":             "Ukraine",
+        "Biélorussie":         "Belarus",
+        "Moldavie":            "Moldova",
+        "Chypre":              "Cyprus",
+        "Malte":               "Malta",
+        "Monaco":              "Monaco",
+        "Andorre":             "Andorra",
+        "Liechtenstein":       "Liechtenstein",
+        # ── Afrique ──
+        "Maroc":               "Morocco",
+        "Algérie":             "Algeria",
         "Tunisie":             "Tunisia",
-        "Brésil":              "Brazil",
+        "Égypte":              "Egypt",
+        "Libye":               "Libya",
+        "Sénégal":             "Senegal",
+        "Côte d'Ivoire":       "Ivory Coast",
+        "Mali":                "Mali",
+        "Cameroun":            "Cameroon",
+        "Nigeria":             "Nigeria",
+        "Kenya":               "Kenya",
+        "Tanzanie":            "Tanzania",
+        "Afrique du Sud":      "South Africa",
+        "Éthiopie":            "Ethiopia",
+        "Ghana":               "Ghana",
+        "Madagascar":          "Madagascar",
+        "Maurice":             "Mauritius",
+        "Île Maurice":         "Mauritius",
+        "Réunion":             "Reunion",
+        "Seychelles":          "Seychelles",
+        # ── Asie ──
         "Inde":                "India",
         "Chine":               "China",
         "Japon":               "Japan",
-        "Australie":           "Australia",
-        "Canada":              "Canada",
-        "Mexique":             "Mexico",
+        "Corée du Sud":        "South Korea",
+        "Corée du Nord":       "North Korea",
+        "Thaïlande":           "Thailand",
+        "Vietnam":             "Vietnam",
+        "Viêt Nam":            "Vietnam",
+        "Cambodge":            "Cambodia",
+        "Laos":                "Laos",
+        "Indonésie":           "Indonesia",
+        "Malaisie":            "Malaysia",
+        "Singapour":           "Singapore",
+        "Philippines":         "Philippines",
+        "Birmanie":            "Myanmar",
+        "Myanmar":             "Myanmar",
+        "Sri Lanka":           "Sri Lanka",
+        "Bangladesh":          "Bangladesh",
+        "Pakistan":            "Pakistan",
+        "Afghanistan":         "Afghanistan",
+        "Iran":                "Iran",
+        "Irak":                "Iraq",
+        "Israël":              "Israel",
+        "Liban":               "Lebanon",
+        "Jordanie":            "Jordan",
+        "Syrie":               "Syria",
+        "Arabie saoudite":     "Saudi Arabia",
+        "Émirats arabes unis": "United Arab Emirates",
+        "Qatar":               "Qatar",
+        "Koweït":              "Kuwait",
+        "Oman":                "Oman",
+        "Bahreïn":             "Bahrain",
+        "Yémen":               "Yemen",
         "Turquie":             "Türkiye",
         "Russie":              "Russia",
-        "Norvège":             "Norway",
-        "Suède":               "Sweden",
-        "Portugal":            "Portugal",
-        "Pologne":             "Poland",
+        "Kazakhstan":          "Kazakhstan",
+        "Ouzbékistan":         "Uzbekistan",
+        "Mongolie":            "Mongolia",
+        # ── Amériques ──
+        "États-Unis":          "United States",
+        "Canada":              "Canada",
+        "Mexique":             "Mexico",
+        "Brésil":              "Brazil",
+        "Argentine":           "Argentina",
+        "Chili":               "Chile",
+        "Pérou":               "Peru",
+        "Colombie":            "Colombia",
+        "Venezuela":           "Venezuela",
+        "Équateur":            "Ecuador",
+        "Bolivie":             "Bolivia",
+        "Paraguay":            "Paraguay",
+        "Uruguay":             "Uruguay",
+        "Cuba":                "Cuba",
+        "Haïti":                "Haiti",
+        "République dominicaine":"Dominican Republic",
+        "Jamaïque":            "Jamaica",
+        "Costa Rica":          "Costa Rica",
+        "Panama":              "Panama",
+        "Guatemala":           "Guatemala",
+        # ── Océanie ──
+        "Australie":           "Australia",
+        "Nouvelle-Zélande":    "New Zealand",
+        "Fidji":               "Fiji",
+        "Polynésie française": "French Polynesia",
+        # ── Villes courantes ──
+        "Londres":             "London",
+        "Rome":                "Rome",
+        "Madrid":              "Madrid",
+        "Berlin":              "Berlin",
+        "Athènes":             "Athens",
+        "Vienne":              "Vienna",
+        "Bruxelles":           "Brussels",
+        "Lisbonne":            "Lisbon",
+        "Amsterdam":           "Amsterdam",
+        "Copenhague":          "Copenhagen",
+        "Stockholm":           "Stockholm",
+        "Oslo":                "Oslo",
+        "Helsinki":            "Helsinki",
+        "Dublin":              "Dublin",
+        "Édimbourg":           "Edinburgh",
+        "Varsovie":            "Warsaw",
+        "Prague":              "Prague",
+        "Budapest":            "Budapest",
+        "Bucarest":            "Bucharest",
+        "Marrakech":           "Marrakesh",
+        "Casablanca":          "Casablanca",
+        "Le Caire":            "Cairo",
+        "Tokyo":               "Tokyo",
+        "Pékin":                "Beijing",
+        "Shanghai":            "Shanghai",
+        "Bangkok":             "Bangkok",
+        "Hong Kong":           "Hong Kong",
+        "Dubaï":               "Dubai",
+        "Moscou":              "Moscow",
+        "Istanbul":            "Istanbul",
+        "Bombay":              "Mumbai",
+        "Mumbai":              "Mumbai",
+        "New York":            "New York",
+        "Los Angeles":         "Los Angeles",
+        "San Francisco":       "San Francisco",
+        "Mexico":              "Mexico City",
+        "Buenos Aires":        "Buenos Aires",
+        "Rio de Janeiro":      "Rio de Janeiro",
+        "São Paulo":           "São Paulo",
+        "La Havane":           "Havana",
+        "Sydney":              "Sydney",
+        "Melbourne":           "Melbourne",
     }
 
     def translate(values):
@@ -2777,18 +2927,24 @@ def render_client_profile_card(
     if show_professional:
         prof = sg(col_profession, ""); emp = sg(col_employeur, "")
         sit  = sg(col_situation_pro, "")
+        # Labels traduits si la card est en mode EN
+        lbl_section = "Professional situation" if _has_translations else "Situation professionnelle"
+        lbl_prof    = "Profession"             if _has_translations else "Profession"
+        lbl_emp     = "Employer"               if _has_translations else "Employeur"
+        lbl_contract= "Contract"               if _has_translations else "Contrat"
+        lbl_empty   = "Not specified"          if _has_translations else "Non renseigné"
         pro_rows = []
-        if prof: pro_rows.append(("Profession", tx_translate('profession', prof)))
-        if emp:  pro_rows.append(("Employeur",  emp))
-        if sit:  pro_rows.append(("Contrat",    tx_translate('situation_pro', sit)))
+        if prof: pro_rows.append((lbl_prof,     tx_translate('profession', prof)))
+        if emp:  pro_rows.append((lbl_emp,      emp))
+        if sit:  pro_rows.append((lbl_contract, tx_translate('situation_pro', sit)))
         pro_body = "".join(
             f"<div style='display:flex;gap:8px;padding:5px 0;border-top:1px solid #1e2130;'><span style='color:#64748b;font-size:.72rem;min-width:85px;flex-shrink:0;'>{k}</span><span style='color:#e8eaf0;font-size:.78rem;'>{v}</span></div>"
             for k, v in pro_rows
-        ) if pro_rows else "<span style='color:#334155;font-size:.75rem;font-style:italic;'>Non renseigné</span>"
+        ) if pro_rows else f"<span style='color:#334155;font-size:.75rem;font-style:italic;'>{lbl_empty}</span>"
         pro_section = (
             f"<div style='flex:1;padding:11px 16px;'><div style='color:#60a5fa;font-size:.68rem;"
             f"text-transform:uppercase;letter-spacing:1px;font-family:JetBrains Mono,monospace;"
-            f"margin-bottom:7px;'>Situation professionnelle</div>{pro_body}</div>"
+            f"margin-bottom:7px;'>{lbl_section}</div>{pro_body}</div>"
         )
 
     # ── Render tout en un seul st.markdown (pas de gap Streamlit) ────────────
@@ -4819,39 +4975,82 @@ def run_app(schema: dict, enrich: dict):
 
                 _enrich_snapshots = []
                 for _, _r in _unique_df.iterrows():
-                    _cid_raw = _r.get(_id_col)
-                    # Filtrer les NaN/None/vides proprement
-                    if _cid_raw is None or (isinstance(_cid_raw, float) and pd.isna(_cid_raw)):
-                        continue
                     try:
-                        _cid_key = int(float(_cid_raw))
-                    except (TypeError, ValueError):
-                        if not str(_cid_raw).strip() or str(_cid_raw).lower() == "nan":
+                        _cid_raw = _r.get(_id_col)
+                        # Filtrer les NaN/None/vides proprement
+                        if _cid_raw is None:
                             continue
-                        _cid_key = str(_cid_raw)
+                        try:
+                            if pd.isna(_cid_raw):
+                                continue
+                        except (TypeError, ValueError):
+                            pass  # ce n'est pas NaN-comparable, on continue
+                        try:
+                            _cid_key = int(float(_cid_raw))
+                        except (TypeError, ValueError):
+                            _s = str(_cid_raw).strip()
+                            if not _s or _s.lower() == "nan":
+                                continue
+                            _cid_key = _s
 
-                    # Collecter les destinations et types_voyage du client depuis le df complet
-                    _client_rows = df[df[_id_col] == _cid_raw]
-                    _destinations = []
-                    _types_voyage = []
-                    if "destination" in df.columns:
-                        _destinations = [str(v) for v in _client_rows["destination"].dropna().unique() if str(v).strip()]
-                    if "pays_destination" in df.columns:
-                        _destinations += [str(v) for v in _client_rows["pays_destination"].dropna().unique() if str(v).strip()]
-                    if "type_voyage" in df.columns:
-                        _types_voyage = [str(v) for v in _client_rows["type_voyage"].dropna().unique() if str(v).strip()]
+                        # Collecter les destinations et types_voyage du client depuis le df complet
+                        # On utilise pd.notna pour le masque (plus robuste que == pour NaN)
+                        try:
+                            _client_rows = df[df[_id_col].apply(
+                                lambda x: x == _cid_raw if pd.notna(x) else False
+                            )]
+                        except Exception:
+                            _client_rows = df[df[_id_col] == _cid_raw]
+                        _destinations = []
+                        _types_voyage = []
 
-                    _enrich_snapshots.append((_cid_key, {
-                        "id":            _cid_key,
-                        "nom":           str(_r.get("nom", "") or ""),
-                        "prenom":        str(_r.get("prenom", "") or ""),
-                        "email":         str(_r.get("email", "") or ""),
-                        "ville":         str(_r.get("ville", "") or ""),
-                        "profession":    str(_r.get("profession", "") or ""),
-                        "situation_pro": str(_r.get("situation_pro", "") or ""),
-                        "destinations":  list(set(_destinations)),
-                        "types_voyage":  list(set(_types_voyage)),
-                    }))
+                        # Recherche tolérante des colonnes (avec/sans préfixe de jointure)
+                        def _find_col_safe(*names):
+                            for n in names:
+                                if n in df.columns: return n
+                            # Essayer avec préfixes voyages_*, clients_*
+                            for n in names:
+                                for prefix in ("voyages_", "clients_", "affectations_"):
+                                    if (prefix + n) in df.columns:
+                                        return prefix + n
+                            return None
+
+                        _c_dest = _find_col_safe("destination")
+                        _c_pays = _find_col_safe("pays_destination", "pays")
+                        _c_tv   = _find_col_safe("type_voyage")
+
+                        if _c_dest:
+                            _destinations += [str(v) for v in _client_rows[_c_dest].dropna().unique() if str(v).strip()]
+                        if _c_pays:
+                            _destinations += [str(v) for v in _client_rows[_c_pays].dropna().unique() if str(v).strip()]
+                        if _c_tv:
+                            _types_voyage = [str(v) for v in _client_rows[_c_tv].dropna().unique() if str(v).strip()]
+
+                        # Pareil pour les champs client (peuvent être préfixés)
+                        _c_nom    = _find_col_safe("nom")
+                        _c_prenom = _find_col_safe("prenom")
+                        _c_email  = _find_col_safe("email")
+                        _c_ville  = _find_col_safe("ville")
+                        _c_prof   = _find_col_safe("profession")
+                        _c_sit    = _find_col_safe("situation_pro")
+
+                        _enrich_snapshots.append((_cid_key, {
+                            "id":            _cid_key,
+                            "nom":           str(_r.get(_c_nom, "") if _c_nom else "") or "",
+                            "prenom":        str(_r.get(_c_prenom, "") if _c_prenom else "") or "",
+                            "email":         str(_r.get(_c_email, "") if _c_email else "") or "",
+                            "ville":         str(_r.get(_c_ville, "") if _c_ville else "") or "",
+                            "profession":    str(_r.get(_c_prof, "") if _c_prof else "") or "",
+                            "situation_pro": str(_r.get(_c_sit, "") if _c_sit else "") or "",
+                            "destinations":  list(set(_destinations)),
+                            "types_voyage":  list(set(_types_voyage)),
+                        }))
+                    except Exception as _exc:
+                        # Snapshot loupé pour ce client — on continue avec les autres
+                        # plutôt que de planter toute la page
+                        import sys
+                        print(f"[enrich] Snapshot loupé : {_exc}", file=sys.stderr)
+                        continue
 
                 # Combien sont à enrichir (= pas encore dans le store) ?
                 with _enrich_lock:
@@ -4902,12 +5101,27 @@ def run_app(schema: dict, enrich: dict):
                     else:
                         # Bouton de déclenchement
                         if todo == 0:
-                            st.markdown(
-                                "<div style='color:#475569;font-size:.78rem;font-style:italic;"
-                                "font-family:JetBrains Mono,monospace;margin:6px 0 12px;'>"
-                                "✓ Toutes les fiches visibles sont déjà enrichies.</div>",
-                                unsafe_allow_html=True,
-                            )
+                            zc1, zc2 = st.columns([5, 1])
+                            with zc1:
+                                st.markdown(
+                                    "<div style='color:#475569;font-size:.78rem;font-style:italic;"
+                                    "font-family:JetBrains Mono,monospace;margin:6px 0 12px;'>"
+                                    "✓ Toutes les fiches visibles sont déjà enrichies.</div>",
+                                    unsafe_allow_html=True,
+                                )
+                            with zc2:
+                                if st.button(
+                                    "🗑 Cache",
+                                    key="purge_enrich_cache_zero",
+                                    use_container_width=True,
+                                    help="Vider le cache pour pouvoir re-enrichir",
+                                ):
+                                    with _enrich_lock:
+                                        _enrich_store.clear()
+                                    with _batch_lock:
+                                        _batch_state["done"]    = 0
+                                        _batch_state["total"]   = 0
+                                    st.rerun(scope="app")
                         else:
                             _marker = "global-enrich-trigger"
                             st.markdown(
@@ -4926,18 +5140,33 @@ def run_app(schema: dict, enrich: dict):
                                 f'}}</style>',
                                 unsafe_allow_html=True,
                             )
-                            if st.button(
-                                f"✨ Enrichir toutes les fiches  ·  {todo} à traiter",
-                                key="global_enrich_btn",
-                                use_container_width=True,
-                                help="Lance les appels API en série, 1 fiche à la fois",
-                            ):
-                                if start_batch_enrichment(snapshots):
-                                    # Marqueur pour qu'à la fin du batch on
-                                    # rerun toute l'app et que les badges
-                                    # de traduction apparaissent dans les cards
-                                    st.session_state["_batch_pending_refresh"] = True
-                                    st.rerun(scope="fragment")
+                            bcol1, bcol2 = st.columns([5, 1])
+                            with bcol1:
+                                if st.button(
+                                    f"✨ Enrichir toutes les fiches  ·  {todo} à traiter",
+                                    key="global_enrich_btn",
+                                    use_container_width=True,
+                                    help="Lance les appels API en série, 1 fiche à la fois",
+                                ):
+                                    if start_batch_enrichment(snapshots):
+                                        # Marqueur pour qu'à la fin du batch on
+                                        # rerun toute l'app et que les badges
+                                        # de traduction apparaissent dans les cards
+                                        st.session_state["_batch_pending_refresh"] = True
+                                        st.rerun(scope="fragment")
+                            with bcol2:
+                                if st.button(
+                                    "🗑 Cache",
+                                    key="purge_enrich_cache",
+                                    use_container_width=True,
+                                    help="Vider le cache des enrichissements (toutes les fiches reviennent en FR)",
+                                ):
+                                    with _enrich_lock:
+                                        _enrich_store.clear()
+                                    with _batch_lock:
+                                        _batch_state["done"]    = 0
+                                        _batch_state["total"]   = 0
+                                    st.rerun(scope="app")
 
                 _render_global_enrich_bar()
 
