@@ -4826,11 +4826,14 @@ def run_app(schema: dict, enrich: dict):
                 _enrich_snapshots = []
                 for _, _r in _unique_df.iterrows():
                     _cid_raw = _r.get(_id_col)
-                    if _cid_raw is None:
+                    # Filtrer les NaN/None/vides proprement
+                    if _cid_raw is None or (isinstance(_cid_raw, float) and pd.isna(_cid_raw)):
                         continue
                     try:
                         _cid_key = int(float(_cid_raw))
                     except (TypeError, ValueError):
+                        if not str(_cid_raw).strip() or str(_cid_raw).lower() == "nan":
+                            continue
                         _cid_key = str(_cid_raw)
 
                     # Collecter les destinations et types_voyage du client depuis le df complet
@@ -4846,12 +4849,12 @@ def run_app(schema: dict, enrich: dict):
 
                     _enrich_snapshots.append((_cid_key, {
                         "id":            _cid_key,
-                        "nom":           str(_r.get("nom", "")),
-                        "prenom":        str(_r.get("prenom", "")),
-                        "email":         str(_r.get("email", "")),
-                        "ville":         str(_r.get("ville", "")),
-                        "profession":    str(_r.get("profession", "")),
-                        "situation_pro": str(_r.get("situation_pro", "")),
+                        "nom":           str(_r.get("nom", "") or ""),
+                        "prenom":        str(_r.get("prenom", "") or ""),
+                        "email":         str(_r.get("email", "") or ""),
+                        "ville":         str(_r.get("ville", "") or ""),
+                        "profession":    str(_r.get("profession", "") or ""),
+                        "situation_pro": str(_r.get("situation_pro", "") or ""),
                         "destinations":  list(set(_destinations)),
                         "types_voyage":  list(set(_types_voyage)),
                     }))
@@ -4863,7 +4866,12 @@ def run_app(schema: dict, enrich: dict):
                 _batch = get_batch_state()
 
                 # ── Barre d'enrichissement (bouton + progression live) ──────
-                @st.fragment(run_every="0.8s" if _batch["running"] else None)
+                # NOTE : run_every doit être CONSTANT car le décorateur est figé
+                # au moment de la définition de la fonction. Si on faisait
+                # `run_every="0.8s" if running else None`, le fragment ne
+                # pollerait jamais après le clic (car running=False au moment
+                # où le décorateur est évalué).
+                @st.fragment(run_every="0.8s")
                 def _render_global_enrich_bar(snapshots=_enrich_snapshots, todo=_todo):
                     bstate = get_batch_state()
 
