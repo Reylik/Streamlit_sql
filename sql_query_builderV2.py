@@ -2306,25 +2306,126 @@ def _do_client_enrichment(client_id, snapshot: dict) -> dict:
     """
     ⚠️  À REMPLACER par votre vrai appel API.
 
-    `snapshot` est un dictionnaire avec quelques infos du client (email, nom,
-    pays, etc.) que vous pouvez utiliser pour appeler votre API externe.
+    Reçoit un `snapshot` contenant les valeurs FR à traduire :
+        {
+          "profession":    "Ingénieur",
+          "situation_pro": "Salarié",
+          "destinations":  ["Paris", "Maroc", ...],
+          "types_voyage":  ["loisir", "affaires"],
+          ...
+        }
 
-    Doit renvoyer un dict avec les valeurs enrichies. La fiche affichera ce
-    qui s'y trouve. Vous pouvez ajouter ou retirer des clés librement —
-    `render_client_enrichment_block` ci-dessous est tolérant aux clés absentes.
+    Doit renvoyer un dict avec une clé "translations" qui contient les
+    traductions EN pour chacune des valeurs FR :
+        {
+          "translations": {
+            "profession":    {"Ingénieur": "Engineer"},
+            "situation_pro": {"Salarié": "Employed"},
+            "destinations":  {"Paris": "Paris", "Maroc": "Morocco", ...},
+            "types_voyage":  {"loisir": "Leisure", "affaires": "Business"},
+          }
+        }
+
+    Les clés absentes du dict ne reçoivent pas de badge — le rendu est tolérant.
     """
-    # ── Exemple : simulation d'un appel API qui prend 1 à 3 secondes ──
+    # ── Simulation d'un appel API qui prend 0.5 à 1.5 seconde ──
     import time, random
-    time.sleep(random.uniform(1.0, 3.0))
-    # Pour tester un échec aléatoire, dé-commenter :
+    time.sleep(random.uniform(0.5, 1.5))
+
+    # Dictionnaire de traductions FR→EN (à remplacer par votre vrai appel API)
+    _FR_EN = {
+        # Professions
+        "Ingénieur":           "Engineer",
+        "Médecin":             "Doctor",
+        "Avocat":              "Lawyer",
+        "Enseignant":          "Teacher",
+        "Comptable":           "Accountant",
+        "Architecte":          "Architect",
+        "Développeur":         "Developer",
+        "Commercial":          "Sales Rep",
+        "Consultant":          "Consultant",
+        "Infirmier":           "Nurse",
+        "Infirmière":          "Nurse",
+        "Pharmacien":          "Pharmacist",
+        "Chef de projet":      "Project Manager",
+        "Directeur":           "Director",
+        "Étudiant":            "Student",
+        "Retraité":            "Retired",
+        "Artisan":             "Craftsman",
+        "Journaliste":         "Journalist",
+        "Chercheur":           "Researcher",
+        "Designer":            "Designer",
+        # Situations pro
+        "Salarié":             "Employee",
+        "Indépendant":         "Self-employed",
+        "Fonctionnaire":       "Civil Servant",
+        "Étudiant":            "Student",
+        "Retraité":            "Retired",
+        "Sans emploi":         "Unemployed",
+        "Chef d'entreprise":   "Business Owner",
+        "Intérimaire":         "Temp Worker",
+        "Apprenti":            "Apprentice",
+        "Stagiaire":           "Intern",
+        # Types de voyage
+        "loisir":              "leisure",
+        "Loisir":              "Leisure",
+        "affaires":            "business",
+        "Affaires":            "Business",
+        "tourisme":            "tourism",
+        "Tourisme":            "Tourism",
+        "professionnel":       "professional",
+        "Professionnel":       "Professional",
+        "famille":             "family",
+        "Famille":             "Family",
+        # Destinations / pays (mêmes noms ou variants)
+        "Maroc":               "Morocco",
+        "Espagne":             "Spain",
+        "Italie":              "Italy",
+        "Allemagne":           "Germany",
+        "Royaume-Uni":         "United Kingdom",
+        "Grèce":               "Greece",
+        "Belgique":            "Belgium",
+        "Suisse":              "Switzerland",
+        "Pays-Bas":            "Netherlands",
+        "États-Unis":          "United States",
+        "Égypte":              "Egypt",
+        "Tunisie":             "Tunisia",
+        "Brésil":              "Brazil",
+        "Inde":                "India",
+        "Chine":               "China",
+        "Japon":               "Japan",
+        "Australie":           "Australia",
+        "Canada":              "Canada",
+        "Mexique":             "Mexico",
+        "Turquie":             "Türkiye",
+        "Russie":              "Russia",
+        "Norvège":             "Norway",
+        "Suède":               "Sweden",
+        "Portugal":            "Portugal",
+        "Pologne":             "Poland",
+    }
+
+    def translate(values):
+        """Traduit une liste de valeurs, ne garde que celles trouvées."""
+        result = {}
+        for v in values:
+            if not v or not isinstance(v, str):
+                continue
+            v_stripped = v.strip()
+            if v_stripped in _FR_EN:
+                result[v_stripped] = _FR_EN[v_stripped]
+        return result
+
+    # ── Pour test d'erreur aléatoire, dé-commenter :
     # if random.random() < 0.1: raise RuntimeError("API timeout")
 
-    # Exemples de valeurs renvoyées — adaptez selon votre API
     return {
-        "risk_score":     random.randint(0, 100),
-        "geo_country":    random.choice(["FR", "BE", "CH", "LU", "CA"]),
-        "email_verified": random.choice([True, False]),
-        "last_login":     f"il y a {random.randint(1, 90)} j",
+        "translations": {
+            "profession":    translate([snapshot.get("profession", "")]),
+            "situation_pro": translate([snapshot.get("situation_pro", "")]),
+            "destinations":  translate(snapshot.get("destinations", []) or []),
+            "types_voyage":  translate(snapshot.get("types_voyage", []) or []),
+        }
     }
 
 
@@ -2486,43 +2587,58 @@ def render_client_enrichment_block(client_id, snapshot: dict, accent_color: str 
         )
         return
 
-    # ── État DONE : affichage du résultat sous forme de chips ────────────────
+    # ── État DONE : récap des traductions effectuées ─────────────────────────
     data = state.get("data") or {}
+    translations = data.get("translations") or {}
 
-    def chip(label, value, color="#a5f3fc"):
-        if value is None or value == "":
+    # Compter le nombre total de traductions effectuées
+    n_total = sum(len(v) for v in translations.values())
+
+    if n_total == 0:
+        # Rien à traduire trouvé
+        st.markdown(
+            f"<div style='background:linear-gradient(135deg,#0f1118,#13151d);"
+            f"border:1px solid #1e2130;border-left:3px solid {accent_color};"
+            f"border-radius:8px;padding:8px 14px;margin:6px 0;"
+            f"font-family:JetBrains Mono,monospace;font-size:.74rem;color:#64748b;'>"
+            f"✨ Aucune traduction disponible pour cette fiche</div>",
+            unsafe_allow_html=True,
+        )
+        return
+
+    def section_html(label, pairs_dict):
+        if not pairs_dict:
             return ""
+        items = " &nbsp; ".join(
+            f"<span style='color:#cbd5e1;'>{fr}</span> "
+            f"<span style='color:{accent_color};'>→</span> "
+            f"<span style='background:{accent_color}22;color:{accent_color};"
+            f"padding:1px 7px;border-radius:6px;font-weight:600;'>{en}</span>"
+            for fr, en in pairs_dict.items()
+        )
         return (
-            f"<div style='background:#13151d;border:1px solid #1e2130;"
-            f"border-radius:14px;padding:3px 11px;display:inline-flex;align-items:center;"
-            f"gap:6px;font-family:JetBrains Mono,monospace;font-size:.72rem;'>"
-            f"<span style='color:#64748b;'>{label}</span>"
-            f"<span style='color:{color};font-weight:600;'>{value}</span></div>"
+            f"<div style='display:flex;align-items:flex-start;gap:10px;padding:3px 0;'>"
+            f"<span style='color:#64748b;font-size:.68rem;min-width:90px;flex-shrink:0;"
+            f"text-transform:uppercase;letter-spacing:.8px;'>{label}</span>"
+            f"<span style='font-size:.76rem;'>{items}</span></div>"
         )
 
-    score = data.get("risk_score")
-    score_color = (
-        "#86efac" if isinstance(score, (int, float)) and score < 30 else
-        "#fbbf24" if isinstance(score, (int, float)) and score < 70 else
-        "#f87171" if score is not None else "#a5f3fc"
-    )
-
-    chips_html = " ".join(filter(None, [
-        chip("score",  f"{score}/100" if score is not None else None, score_color),
-        chip("pays",   data.get("geo_country")),
-        chip("email",  "✓ vérifié" if data.get("email_verified") else "✗ non vérifié",
-             "#86efac" if data.get("email_verified") else "#f87171"),
-        chip("dernier login", data.get("last_login"), "#cbd5e1"),
-    ]))
+    sections = filter(None, [
+        section_html("Profession",    translations.get("profession", {})),
+        section_html("Situation",     translations.get("situation_pro", {})),
+        section_html("Destinations",  translations.get("destinations", {})),
+        section_html("Types voyage",  translations.get("types_voyage", {})),
+    ])
 
     st.markdown(
         f"<div style='background:linear-gradient(135deg,#0f1118 0%,#13151d 100%);"
         f"border:1px solid #1e2130;border-left:3px solid {accent_color};"
-        f"border-radius:8px;padding:10px 14px;margin:6px 0;'>"
+        f"border-radius:8px;padding:10px 14px;margin:6px 0;"
+        f"font-family:JetBrains Mono,monospace;'>"
         f"<div style='color:#94a3b8;font-size:.68rem;text-transform:uppercase;"
-        f"letter-spacing:1.2px;font-family:JetBrains Mono,monospace;margin-bottom:6px;'>"
-        f"✨ Enrichissement API</div>"
-        f"<div style='display:flex;flex-wrap:wrap;gap:6px;'>{chips_html}</div>"
+        f"letter-spacing:1.2px;margin-bottom:6px;'>"
+        f"✨ Traductions ({n_total})</div>"
+        f"{''.join(sections)}"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -2561,6 +2677,8 @@ def render_client_profile_card(
     col_c_profession="profession", col_c_ville="ville", col_c_statut="statut",
     # ── Options d'affichage ─────────────────────────────────────────────────────
     show_identity=True, show_professional=True, show_companions=True,
+    # ── Traductions FR→EN (badges violets à côté des valeurs) ───────────────────
+    translations: dict = None,
 ):
     """
     Affiche la fiche profil complète d'un client avec ses voyages.
@@ -2582,6 +2700,28 @@ def render_client_profile_card(
     gérées silencieusement via _safe_get — aucune ligne vide n'est rendue.
     """
     sg = lambda col, d="—": _safe_get(client_row, col, d)
+
+    # ── Helper : ajoute un badge violet « → EN » à côté d'une valeur FR ─────────
+    translations = translations or {}
+    def tx_badge(category: str, fr_value):
+        """
+        Si une traduction EN existe pour `fr_value` dans `translations[category]`,
+        retourne un fragment HTML inline « <badge>EN</badge> » à concaténer
+        après la valeur FR. Sinon retourne une chaîne vide.
+        """
+        if not fr_value or fr_value == "—":
+            return ""
+        cat = translations.get(category) or {}
+        en = cat.get(str(fr_value).strip())
+        if not en:
+            return ""
+        return (
+            f" <span style='background:#a78bfa22;color:#a78bfa;"
+            f"border:1px solid #a78bfa55;border-radius:8px;padding:1px 7px;"
+            f"font-size:.66rem;font-weight:600;font-family:JetBrains Mono,monospace;"
+            f"margin-left:4px;letter-spacing:.3px;' title='Traduction EN'>"
+            f"🇬🇧 {en}</span>"
+        )
 
     # ── En-tête + Identité + Pro : un seul bloc HTML (aucun gap Streamlit) ──────
     nom     = sg(col_nom);        prenom = sg(col_prenom)
@@ -2661,9 +2801,9 @@ def render_client_profile_card(
         prof = sg(col_profession, ""); emp = sg(col_employeur, "")
         sit  = sg(col_situation_pro, "")
         pro_rows = []
-        if prof: pro_rows.append(("Profession", prof))
+        if prof: pro_rows.append(("Profession", f"{prof}{tx_badge('profession', prof)}"))
         if emp:  pro_rows.append(("Employeur",  emp))
-        if sit:  pro_rows.append(("Contrat",    sit))
+        if sit:  pro_rows.append(("Contrat",    f"{sit}{tx_badge('situation_pro', sit)}"))
         pro_body = "".join(
             f"<div style='display:flex;gap:8px;padding:5px 0;border-top:1px solid #1e2130;'><span style='color:#64748b;font-size:.72rem;min-width:85px;flex-shrink:0;'>{k}</span><span style='color:#e8eaf0;font-size:.78rem;'>{v}</span></div>"
             for k, v in pro_rows
@@ -2805,13 +2945,14 @@ def render_client_profile_card(
                 f"background:{cc};flex-shrink:0;'></div>"
                 f"<div style='flex:1;'>"
                 f"<span style='color:#e8eaf0;font-weight:600;font-size:.85rem;'>"
-                f"{dest}</span>"
+                f"{dest}{tx_badge('destinations', dest)}</span>"
                 f"<span style='color:#475569;font-size:.73rem;margin-left:8px;'>"
-                f"{pays}{'  ·  ' if pays else ''}{date_dep}"
+                f"{pays}{tx_badge('destinations', pays)}{'  ·  ' if pays else ''}{date_dep}"
                 f"{'  →  '+date_ret if date_ret and date_ret != date_dep else ''}"
                 f"{d_str}</span></div>"
                 f"<span style='background:{tc}22;color:{tc};font-size:.68rem;"
                 f"padding:2px 7px;border-radius:10px;white-space:nowrap;'>{tv}</span>"
+                f"{tx_badge('types_voyage', tv)}"
                 f"{'<span style=\"font-size:.72rem;margin-left:4px;\">'+stars+'</span>' if stars else ''}"
                 f"</div></div>",
                 unsafe_allow_html=True)
@@ -4691,12 +4832,28 @@ def run_app(schema: dict, enrich: dict):
                         _cid_key = int(float(_cid_raw))
                     except (TypeError, ValueError):
                         _cid_key = str(_cid_raw)
+
+                    # Collecter les destinations et types_voyage du client depuis le df complet
+                    _client_rows = df[df[_id_col] == _cid_raw]
+                    _destinations = []
+                    _types_voyage = []
+                    if "destination" in df.columns:
+                        _destinations = [str(v) for v in _client_rows["destination"].dropna().unique() if str(v).strip()]
+                    if "pays_destination" in df.columns:
+                        _destinations += [str(v) for v in _client_rows["pays_destination"].dropna().unique() if str(v).strip()]
+                    if "type_voyage" in df.columns:
+                        _types_voyage = [str(v) for v in _client_rows["type_voyage"].dropna().unique() if str(v).strip()]
+
                     _enrich_snapshots.append((_cid_key, {
-                        "id":     _cid_key,
-                        "nom":    str(_r.get("nom", "")),
-                        "prenom": str(_r.get("prenom", "")),
-                        "email":  str(_r.get("email", "")),
-                        "ville":  str(_r.get("ville", "")),
+                        "id":            _cid_key,
+                        "nom":           str(_r.get("nom", "")),
+                        "prenom":        str(_r.get("prenom", "")),
+                        "email":         str(_r.get("email", "")),
+                        "ville":         str(_r.get("ville", "")),
+                        "profession":    str(_r.get("profession", "")),
+                        "situation_pro": str(_r.get("situation_pro", "")),
+                        "destinations":  list(set(_destinations)),
+                        "types_voyage":  list(set(_types_voyage)),
                     }))
 
                 # Combien sont à enrichir (= pas encore dans le store) ?
@@ -4709,6 +4866,14 @@ def run_app(schema: dict, enrich: dict):
                 @st.fragment(run_every="0.8s" if _batch["running"] else None)
                 def _render_global_enrich_bar(snapshots=_enrich_snapshots, todo=_todo):
                     bstate = get_batch_state()
+
+                    # ── Détection : batch tout juste terminé → force un rerun ──
+                    # global pour afficher les badges de traduction dans les cards
+                    if (not bstate["running"]
+                            and st.session_state.get("_batch_pending_refresh")):
+                        st.session_state["_batch_pending_refresh"] = False
+                        st.rerun(scope="app")
+
                     if bstate["running"]:
                         # Progression live
                         done  = bstate["done"]
@@ -4766,6 +4931,10 @@ def run_app(schema: dict, enrich: dict):
                                 help="Lance les appels API en série, 1 fiche à la fois",
                             ):
                                 if start_batch_enrichment(snapshots):
+                                    # Marqueur pour qu'à la fin du batch on
+                                    # rerun toute l'app et que les badges
+                                    # de traduction apparaissent dans les cards
+                                    st.session_state["_batch_pending_refresh"] = True
                                     st.rerun(scope="fragment")
 
                 _render_global_enrich_bar()
@@ -4785,11 +4954,21 @@ def run_app(schema: dict, enrich: dict):
                                 _pp = None
                         else:
                             _pp = None
+                        # Récupérer les traductions si l'enrichissement est terminé
+                        try:
+                            _ck = int(float(group.iloc[0].get(_id_col) or 0))
+                        except (TypeError, ValueError):
+                            _ck = str(group.iloc[0].get(_id_col))
+                        _state = get_enrichment_state(_ck)
+                        _tx = None
+                        if _state["status"] == "done":
+                            _tx = (_state.get("data") or {}).get("translations")
                         render_client_profile_card(
                             client_row=group.iloc[0],
                             voyages_df=group,
                             all_voyages_df=_all_voy,
                             passeports_df=_pp,
+                            translations=_tx,
                         )
                     _render_load_more(_total, "client_grouped")
 
