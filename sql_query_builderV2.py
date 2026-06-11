@@ -498,6 +498,87 @@ def build_date_value(year: int, month: int, day: int) -> str:
     else:            return f"{year:04d}-{month:02d}-{day:02d}"
 
 
+# Formats de dates acceptés en saisie texte (critères bulk et couples).
+# Toutes les dates sont normalisées en ISO "YYYY-MM-DD" (ou partielle
+# "YYYY" / "YYYY-MM") car c'est le format stocké en base.
+DATE_INPUT_FORMATS_HELP = (
+    "Formats acceptés : 2023-04-10 · 10/04/2023 · 10-04-2023 · "
+    "10.04.2023 · 10/04/23 · 20230410 · 04/2023 · 2023"
+)
+
+
+def parse_date_flexible(s) -> "str | None":
+    """
+    Détecte et normalise les formats de date les plus courants vers l'ISO
+    "YYYY-MM-DD" (ou la forme partielle "YYYY" / "YYYY-MM").
+
+    Formats complets reconnus (convention française JJ/MM pour les formats
+    ambigus, comme partout dans l'interface) :
+        2023-04-10   2023/04/10   2023.04.10      (ISO, année en premier)
+        10/04/2023   10-04-2023   10.04.2023      (FR, année en dernier)
+        10/04/23                                   (année sur 2 chiffres)
+        20230410                                   (8 chiffres collés)
+    Formats partiels (utiles avec l'opérateur « Commence par ») :
+        2023          04/2023        2023-04        2023/04
+    Retourne None si rien n'est reconnu ou si la date est invalide
+    (ex. 31/02/2023, mois 13).
+    """
+    if s is None:
+        return None
+    s = str(s).strip()
+    if not s:
+        return None
+
+    def _valid_full(y: int, m: int, d: int) -> "str | None":
+        """Valide une date complète via le calendrier réel."""
+        try:
+            datetime(y, m, d)
+            return f"{y:04d}-{m:02d}-{d:02d}"
+        except ValueError:
+            return None
+
+    def _norm_year(y: int) -> int:
+        """Année à 2 chiffres → 20xx si < 50, sinon 19xx."""
+        if y >= 100:
+            return y
+        return 2000 + y if y < 50 else 1900 + y
+
+    # ── 8 chiffres collés : 20230410 ─────────────────────────────────────────
+    m = re.fullmatch(r"(\d{4})(\d{2})(\d{2})", s)
+    if m:
+        return _valid_full(int(m[1]), int(m[2]), int(m[3]))
+
+    # ── Année en premier : 2023-04-10 / 2023/04/10 / 2023.04.10 ─────────────
+    m = re.fullmatch(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", s)
+    if m:
+        return _valid_full(int(m[1]), int(m[2]), int(m[3]))
+
+    # ── Année en dernier (FR, JJ/MM/AAAA ou JJ/MM/AA) ────────────────────────
+    m = re.fullmatch(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})", s)
+    if m:
+        return _valid_full(_norm_year(int(m[3])), int(m[2]), int(m[1]))
+
+    # ── Partiel : mois/année (04/2023) ───────────────────────────────────────
+    m = re.fullmatch(r"(\d{1,2})[-/.](\d{4})", s)
+    if m:
+        mois = int(m[1])
+        return f"{int(m[2]):04d}-{mois:02d}" if 1 <= mois <= 12 else None
+
+    # ── Partiel : année-mois (2023-04 / 2023/04) ─────────────────────────────
+    m = re.fullmatch(r"(\d{4})[-/.](\d{1,2})", s)
+    if m:
+        mois = int(m[2])
+        return f"{int(m[1]):04d}-{mois:02d}" if 1 <= mois <= 12 else None
+
+    # ── Partiel : année seule ─────────────────────────────────────────────────
+    m = re.fullmatch(r"(\d{4})", s)
+    if m:
+        y = int(m[1])
+        return f"{y:04d}" if 1900 <= y <= 2100 else None
+
+    return None
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ARBRE BINAIRE & SQL
 # ══════════════════════════════════════════════════════════════════════════════
@@ -5662,7 +5743,8 @@ def run_app(schema: dict, enrich: dict):
                         new_date = st.date_input("Date", key="new_date")
                     with bc:
                         new_dates = st.text_input("Dates multiples", key="new_bulk_dates",
-                                                  placeholder="YYYY-MM-DD, YYYY-MM-DD...")
+                                                  placeholder="10/04/2023, 2023-05-12, 04/2024…",
+                                                  help=DATE_INPUT_FORMATS_HELP)
             else:
                 st.text_area("Valeur(s)", key="new_val",
                              placeholder="Une valeur, ou plusieurs séparées par des virgules / sauts de ligne",
@@ -5712,7 +5794,11 @@ def run_app(schema: dict, enrich: dict):
                 f"Valeurs pour « {_label1} »",
                 key=_key1,
                 height=180,
-                placeholder=f"Une valeur de {_label1} par ligne\nDupont\nMartin\nDurand",
+                placeholder=(f"Une valeur de {_label1} par ligne\n"
+                             f"15/03/1985\n1990-07-22\n04.12.2001"
+                             if is_date_col(_pair_col1)
+                             else f"Une valeur de {_label1} par ligne\nDupont\nMartin\nDurand"),
+                help=(DATE_INPUT_FORMATS_HELP if is_date_col(_pair_col1) else None),
             )
         with ta2:
             _pair_text2 = st.text_area(
@@ -5720,9 +5806,10 @@ def run_app(schema: dict, enrich: dict):
                 key=_key2,
                 height=180,
                 placeholder=(f"Une valeur de {_label2} par ligne\n"
-                             f"1985-03-15\n1990-07-22\n2001-12-04"
+                             f"15/03/1985\n1990-07-22\n04.12.2001"
                              if is_date_col(_pair_col2)
                              else f"Une valeur de {_label2} par ligne"),
+                help=(DATE_INPUT_FORMATS_HELP if is_date_col(_pair_col2) else None),
             )
 
         # ── Aperçu en temps réel : nombre de lignes + alerte si déséquilibre ──
@@ -5793,20 +5880,50 @@ def run_app(schema: dict, enrich: dict):
                         f"Les deux zones doivent contenir le même nombre de lignes."
                     )
                 else:
-                    _pairs_final = list(zip(_l1lines, _l2lines))
-                    _l1 = col_labels_map.get(_pair_col1, _pair_col1)
-                    _l2 = col_labels_map.get(_pair_col2, _pair_col2)
-                    _cond = {
-                        "column":     f"({_pair_col1}, {_pair_col2})",
-                        "label":      f"{_l1} + {_l2}",
-                        "columns":    [_pair_col1, _pair_col2],
-                        "col_labels": [_l1, _l2],
-                        "operator":   "Couples",
-                        "pairs":      _pairs_final,
-                        "is_pair":    True,
-                        "is_date":    False,
-                        "is_bulk":    False,
-                    }
+                    # ── Normalisation des colonnes de type date ──────────────
+                    # Si une colonne est une date, chaque valeur est convertie
+                    # vers l'ISO via parse_date_flexible ; les non-reconnues
+                    # bloquent l'ajout avec un message explicite.
+                    _date_errors = []
+
+                    def _normalize_if_date(lines, col, label):
+                        if not is_date_col(col):
+                            return lines
+                        out = []
+                        for v in lines:
+                            norm = parse_date_flexible(v)
+                            if norm is None:
+                                _date_errors.append(f"« {v} » ({label})")
+                                out.append(v)   # conservé tel quel, mais bloquant
+                            else:
+                                out.append(norm)
+                        return out
+
+                    _lab1 = col_labels_map.get(_pair_col1, _pair_col1)
+                    _lab2 = col_labels_map.get(_pair_col2, _pair_col2)
+                    _l1lines = _normalize_if_date(_l1lines, _pair_col1, _lab1)
+                    _l2lines = _normalize_if_date(_l2lines, _pair_col2, _lab2)
+
+                    if _date_errors:
+                        st.warning(
+                            f"Format de date non reconnu : "
+                            f"{', '.join(_date_errors[:5])}"
+                            f"{' …' if len(_date_errors) > 5 else ''}. "
+                            f"{DATE_INPUT_FORMATS_HELP}"
+                        )
+                    else:
+                        _pairs_final = list(zip(_l1lines, _l2lines))
+                        _cond = {
+                            "column":     f"({_pair_col1}, {_pair_col2})",
+                            "label":      f"{_lab1} + {_lab2}",
+                            "columns":    [_pair_col1, _pair_col2],
+                            "col_labels": [_lab1, _lab2],
+                            "operator":   "Couples",
+                            "pairs":      _pairs_final,
+                            "is_pair":    True,
+                            "is_date":    False,
+                            "is_bulk":    False,
+                        }
 
             # ── Mode Simple ──────────────────────────────────────────────────
             else:
@@ -5836,11 +5953,20 @@ def run_app(schema: dict, enrich: dict):
                         if _bulk_raw:
                             _vals = [d.strip() for d in re.split(r"[,\n]", _bulk_raw) if d.strip()]
                             _dts = []
+                            _bad = []
                             for v in _vals:
-                                if re.match(r"^\d{4}-\d{2}-\d{2}$", v):
-                                    _dts.append(v)
+                                _norm = parse_date_flexible(v)
+                                if _norm is not None:
+                                    _dts.append(_norm)
                                 else:
-                                    st.warning(f"Format de date invalide : {v}")
+                                    _bad.append(v)
+                            if _bad:
+                                st.warning(
+                                    f"Format de date non reconnu : "
+                                    f"{', '.join(f'« {b} »' for b in _bad[:5])}"
+                                    f"{' …' if len(_bad) > 5 else ''}. "
+                                    f"{DATE_INPUT_FORMATS_HELP}"
+                                )
                             if _dts:
                                 _cond = {
                                     "column": new_col, "label": _new_label,
