@@ -2304,6 +2304,75 @@ def esc(v) -> str:
     return _html.escape(str(v), quote=True)
 
 
+def show_loading_overlay(message: str = "Recherche en cours…"):
+    """
+    Affiche un overlay plein écran — fond grisé + flou + spinner — qui bloque
+    toute interaction avec le reste de la page.
+
+    Usage : appeler juste après un clic de bouton, AVANT le traitement long.
+    Streamlit rend les éléments au fil de l'exécution du script, donc
+    l'overlay apparaît immédiatement et reste affiché pendant la requête.
+
+    Deux façons de le fermer :
+      • st.rerun() à la fin du traitement → l'overlay n'est pas re-rendu
+        au run suivant, il disparaît tout seul (cas des boutons).
+      • overlay.empty() si le script continue sans rerun (cas de la relance
+        historique) — d'où le placeholder retourné.
+
+        if st.button("▶ Exécuter"):
+            show_loading_overlay("Exécution de la requête…")
+            ... traitement long ...
+            st.rerun()
+    """
+    placeholder = st.empty()
+    placeholder.markdown(
+        f"""
+        <div class="app-loading-overlay">
+          <div class="app-loading-box">
+            <div class="app-loading-spinner"></div>
+            <div class="app-loading-msg">{esc(message)}</div>
+            <div class="app-loading-sub">Veuillez patienter</div>
+          </div>
+        </div>
+        <style>
+        .app-loading-overlay {{
+            position: fixed; inset: 0; z-index: 9999990;
+            background: rgba(8, 9, 14, .72);
+            backdrop-filter: blur(3px);
+            -webkit-backdrop-filter: blur(3px);
+            display: flex; align-items: center; justify-content: center;
+            pointer-events: all; cursor: wait;
+            animation: overlay-fade-in .15s ease-out;
+        }}
+        @keyframes overlay-fade-in {{ from {{ opacity: 0; }} to {{ opacity: 1; }} }}
+        .app-loading-box {{
+            background: linear-gradient(135deg, #13151d 0%, #161826 100%);
+            border: 1px solid #2a2d3e; border-left: 3px solid #a78bfa;
+            border-radius: 14px; padding: 28px 44px;
+            display: flex; flex-direction: column; align-items: center; gap: 14px;
+            box-shadow: 0 12px 48px rgba(0,0,0,.55), 0 0 24px #a78bfa33;
+        }}
+        .app-loading-spinner {{
+            width: 38px; height: 38px; border-radius: 50%;
+            border: 3px solid #2a2d3e; border-top-color: #a78bfa;
+            animation: app-spin .8s linear infinite;
+        }}
+        @keyframes app-spin {{ to {{ transform: rotate(360deg); }} }}
+        .app-loading-msg {{
+            color: #e8eaf0; font-size: .95rem; font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+        }}
+        .app-loading-sub {{
+            color: #64748b; font-size: .72rem;
+            font-family: 'JetBrains Mono', monospace;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    return placeholder
+
+
 def normalize_client_id(raw):
     """
     Convertit un identifiant client brut (int, float, str, NaN, None) en une
@@ -5372,6 +5441,7 @@ def run_app(schema: dict, enrich: dict):
 
     # ── Auto-exécution : relance depuis le popover historique ─────────────────
     if st.session_state.pop("_auto_execute", False):
+        _overlay = show_loading_overlay("Relance de la recherche…")
         _q, _p = build_query(st.session_state.selected_table, st.session_state.conditions,
                              st.session_state.joins, schema)
         try:
@@ -5387,6 +5457,8 @@ def run_app(schema: dict, enrich: dict):
                              joins=st.session_state.joins)
         except Exception as _e:
             st.error(f"Erreur SQL (relance) : {_e}")
+        finally:
+            _overlay.empty()   # pas de st.rerun() ici : on retire l'overlay à la main
 
     # ── En-tête + popovers favoris/historique (top-right) ─────────────────────
     _init_favorites_table(conn)
@@ -5842,6 +5914,7 @@ def run_app(schema: dict, enrich: dict):
                         f"</div>", unsafe_allow_html=True)
         st.markdown("<div style='margin-top:16px;'></div>", unsafe_allow_html=True)
         if st.button("▶ Exécuter la requête", width="stretch", type="primary"):
+            _overlay = show_loading_overlay("Exécution de la requête…")
             q, params = build_query(current_table, st.session_state.conditions, st.session_state.joins, schema)
             try:
                 results = _get_db().read_sql(q, params)
@@ -5857,6 +5930,7 @@ def run_app(schema: dict, enrich: dict):
                                  joins=st.session_state.joins)
                 st.rerun()  # le popover (rendu en haut) relit la DB avec la nouvelle entrée
             except Exception as e:
+                _overlay.empty()   # retirer l'overlay pour laisser voir l'erreur
                 st.error(f"Erreur SQL : {e}")
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -6217,6 +6291,7 @@ def run_app(schema: dict, enrich: dict):
         if st.button(
             f"🔗 Enrichir avec {other_table} — {cnt} ligne{'s' if cnt > 1 else ''} disponible{'s' if cnt > 1 else ''}",
             width="stretch", key="enrich_btn"):
+            _overlay = show_loading_overlay(f"Enrichissement avec {other_table}…")
             try:
                 enriched = run_enrich_query(current_table,
                                             st.session_state.last_where,
@@ -6227,6 +6302,7 @@ def run_app(schema: dict, enrich: dict):
                 st.session_state["_last_cell_click"] = None
                 st.rerun()
             except Exception as e:
+                _overlay.empty()   # retirer l'overlay pour laisser voir l'erreur
                 st.error(f"Erreur enrichissement : {e}")
 
 
